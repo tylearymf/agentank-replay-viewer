@@ -229,6 +229,16 @@
 <script>
 const DIRS = { up: [0, -1], right: [1, 0], down: [0, 1], left: [-1, 0] };
 const TURN_ORDER = ["up", "right", "down", "left"];
+const OFFICIAL_SKILL_DURATIONS = {
+  shield: 4,
+  freeze: 2,
+  stun: 6,
+  overload: 10,
+  cloak: 8,
+  poison: 4,
+  boost: 6
+};
+const DEBUFF_SKILLS = new Set(["freeze", "stun", "poison"]);
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 const timeline = document.getElementById("timeline");
@@ -406,8 +416,22 @@ function tankByName(state, name) {
   return state.tanks.find(function (tank) { return tank.name === name; }) || null;
 }
 
-function tankForSkillEvent(state, event, target) {
+function enemyOfTank(state, tank) {
+  if (!tank) return null;
+  return state.tanks.find(function (candidate) { return candidate !== tank; }) || null;
+}
+
+function skillDurationFrames(skill, event) {
+  const explicit = Number(event.durationFrames);
+  if (Number.isFinite(explicit) && explicit > 0) return Math.round(explicit);
+  return OFFICIAL_SKILL_DURATIONS[skill] || null;
+}
+
+function tankForSkillEvent(state, event, target, skill) {
+  const actor = tankByObject(state, event.sourceObjectId) || tankByIndex(state, event.by);
   if (target && event.targetObjectId) return tankByObject(state, event.targetObjectId);
+  if (target && DEBUFF_SKILLS.has(skill)) return enemyOfTank(state, actor);
+  if (target) return actor;
   return tankByObject(state, event.sourceObjectId) || tankByIndex(state, event.by);
 }
 
@@ -416,9 +440,9 @@ function skillNameForEvent(event) {
 }
 
 function applySkillEvent(state, event, frame) {
-  const actor = tankForSkillEvent(state, event, false);
-  const target = tankForSkillEvent(state, event, true) || actor;
   const skill = skillNameForEvent(event);
+  const actor = tankForSkillEvent(state, event, false, skill);
+  const target = tankForSkillEvent(state, event, true, skill) || actor;
   const action = event.action || "skill";
   if (actor) {
     actor.skillStats = actor.skillStats || emptySkillStats();
@@ -431,12 +455,13 @@ function applySkillEvent(state, event, frame) {
     target.skillPulse = { skill, action };
     target.lastSkill = action + " " + skill + " @ " + frame;
     if (action === "applied") {
+      const durationFrames = skillDurationFrames(skill, event);
       target.activeSkills[skill] = {
         skill,
         source: actor?.name || "",
-        durationFrames: event.durationFrames || null,
-        remainingFrames: event.durationFrames || null,
-        untilFrame: event.durationFrames ? frame + event.durationFrames : null
+        durationFrames,
+        remainingFrames: durationFrames,
+        untilFrame: durationFrames ? frame + durationFrames : null
       };
     }
     if (action === "expired") delete target.activeSkills[skill];
@@ -763,7 +788,7 @@ function drawTank(tank, index, tile, ox, oy) {
 function eventTankName(event, state) {
   if (typeof event.tank === "string") return event.tank;
   if (event.type === "skill") {
-    return tankForSkillEvent(state, event, false)?.name || "";
+    return tankForSkillEvent(state, event, false, skillNameForEvent(event))?.name || "";
   }
   if (event.type === "bullet") {
     return tankByObject(state, event.tank?.id)?.name || tankByIndex(state, event.by)?.name || "";
@@ -777,6 +802,9 @@ function eventTankName(event, state) {
 
 function eventTargetName(event, state) {
   if (event.targetObjectId) return tankByObject(state, event.targetObjectId)?.name || "";
+  if (event.type === "skill" && DEBUFF_SKILLS.has(skillNameForEvent(event))) {
+    return tankForSkillEvent(state, event, true, skillNameForEvent(event))?.name || "";
+  }
   return "";
 }
 
@@ -811,7 +839,12 @@ function eventMeta(event, state) {
   }
   point = point || bullet?.position;
   if (point) parts.push("pos " + formatPoint(point));
-  if (event.durationFrames) parts.push("duration " + event.durationFrames + "f");
+  if (event.type === "skill" && event.action === "applied") {
+    const durationFrames = skillDurationFrames(skillNameForEvent(event), event);
+    if (durationFrames) parts.push("duration " + durationFrames + "f");
+  } else if (event.durationFrames) {
+    parts.push("duration " + event.durationFrames + "f");
+  }
   if (event.reverse) parts.push("reverse");
   if (event.reason) parts.push("reason " + event.reason);
   const target = eventTargetName(event, state);

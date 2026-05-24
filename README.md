@@ -8,6 +8,7 @@ Standalone local replay viewer for official AgenTank match payloads.
 - The right panel shows tank skill usage, active skill duration, and last skill event.
 - The behavior list shows recent frame-by-frame actions such as movement, turns, shots, stars, crashes, and skill events.
 - Bullets follow the official two-cell-per-frame movement when positions must be inferred, and mound hits remove the mound tile from the replay map.
+- Skill effect timers use the current official rules: shield 4f, freeze 2f, stun 6f, overload 10f, cloak 8f, poison 4f, and boost 6f.
 
 ## Run
 
