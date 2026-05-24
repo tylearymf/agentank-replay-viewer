@@ -7,6 +7,7 @@ Standalone local replay viewer for official AgenTank match payloads.
 - Skill casts are highlighted on the board with a colored pulse, active skill ring, and skill label.
 - The right panel shows tank skill usage, active skill duration, and last skill event.
 - The behavior list shows recent frame-by-frame actions such as movement, turns, shots, stars, crashes, and skill events.
+- Bullets follow the official two-cell-per-frame movement when positions must be inferred, and mound hits remove the mound tile from the replay map.
 
 ## Run
 

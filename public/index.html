@@ -161,6 +161,10 @@
       border-color: #7a6630;
       background: #211f18;
     }
+    .event-row.mound {
+      border-color: #8c6a3d;
+      background: #211c16;
+    }
     .event-frame {
       color: var(--muted);
       font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
@@ -483,23 +487,33 @@ function applyOfficialEvent(state, event, frame) {
   if (event.type === "bullet") {
     const shooter = tankByObject(state, event.tank?.id) || tankByIndex(state, event.by);
     const direction = event.direction || event.tank?.direction || shooter?.direction || "right";
+    const existingBullet = function () {
+      return state.bullets.find(function (item) { return item.id === event.objectId; }) || null;
+    };
     if (event.action === "created") {
-      const position = event.position || (event.tank?.position ? step(event.tank.position, direction) : shooter ? step(shooter.position, direction) : [0, 0]);
+      const tankPosition = clonePoint(event.tank?.position);
+      const position = eventPoint(event) || (tankPosition ? step(tankPosition, direction) : shooter ? step(shooter.position, direction) : [0, 0]);
       state.bullets.push({ id: event.objectId, tank: shooter?.name || "", position: position.slice(), direction });
       return;
     }
     if (event.action === "go") {
-      let bullet = state.bullets.find(function (item) { return item.id === event.objectId; });
+      let bullet = existingBullet();
+      const position = eventPoint(event) || (bullet ? twoStep(bullet.position, direction) : null);
+      if (!position) return;
       if (!bullet) {
-        bullet = { id: event.objectId, tank: shooter?.name || "", position: event.position.slice(), direction };
+        bullet = { id: event.objectId, tank: shooter?.name || "", position: position.slice(), direction };
         state.bullets.push(bullet);
       }
-      bullet.position = event.position.slice();
+      bullet.position = position.slice();
       bullet.direction = direction;
       return;
     }
-    if (event.action === "mound" && event.position) {
-      state.map[event.position[1]][event.position[0]] = ".";
+    if (event.action === "mound") {
+      const bullet = existingBullet();
+      const moundPosition = eventPoint(event) || (bullet ? step(bullet.position, direction) : null);
+      if (setMapTile(state, moundPosition, ".")) {
+        state.impacts.push({ type: "mound", position: moundPosition.slice() });
+      }
     }
     if (event.action === "crashed" || event.action === "hit" || event.action === "blocked" || event.action === "mound") {
       const index = state.bullets.findIndex(function (item) { return item.id === event.objectId; });
@@ -517,12 +531,14 @@ function buildFrames() {
   const state = {
     map: replayModel.rows.map(function (row) { return row.split(""); }),
     star: null,
+    impacts: [],
     bullets: [],
     tanks: replayModel.tanks.map(function (tank) { return JSON.parse(JSON.stringify(tank)); })
   };
   const result = [];
   for (let frame = 0; frame < replayModel.records.length; frame += 1) {
     const events = replayModel.records[frame] || [];
+    state.impacts = [];
     updateActiveSkills(state, frame);
     events.forEach(function (event) { applyOfficialEvent(state, event, frame); });
     result.push(JSON.parse(JSON.stringify({ frame, events, state })));
@@ -625,6 +641,44 @@ function formatPoint(value) {
   return Array.isArray(value) ? "[" + value.join(", ") + "]" : "";
 }
 
+function clonePoint(value) {
+  const point = normalizePoint(value);
+  return point ? point.slice() : null;
+}
+
+function normalizePoint(value) {
+  if (Array.isArray(value) && value.length >= 2) {
+    const point = [Number(value[0]), Number(value[1])];
+    return point.every(Number.isFinite) ? point.map(Math.round) : null;
+  }
+  if (value && typeof value === "object" && Number.isFinite(Number(value.x)) && Number.isFinite(Number(value.y))) {
+    return [Math.round(Number(value.x)), Math.round(Number(value.y))];
+  }
+  return null;
+}
+
+function eventPoint(event) {
+  return normalizePoint(event.position)
+    || normalizePoint(event.moundPosition)
+    || normalizePoint(event.targetPosition)
+    || normalizePoint(event.hitPosition)
+    || normalizePoint(event.tilePosition)
+    || normalizePoint(event.at);
+}
+
+function twoStep(pos, dir) {
+  return step(step(pos, dir), dir);
+}
+
+function setMapTile(state, position, value) {
+  const point = normalizePoint(position);
+  if (!point) return false;
+  const row = state.map[point[1]];
+  if (!row || point[0] < 0 || point[0] >= row.length) return false;
+  row[point[0]] = value;
+  return true;
+}
+
 function skillColor(skill) {
   const colors = {
     boost: "#67e8f9",
@@ -707,7 +761,7 @@ function drawTank(tank, index, tile, ox, oy) {
 }
 
 function eventTankName(event, state) {
-  if (event.tank) return event.tank;
+  if (typeof event.tank === "string") return event.tank;
   if (event.type === "skill") {
     return tankForSkillEvent(state, event, false)?.name || "";
   }
@@ -728,13 +782,14 @@ function eventTargetName(event, state) {
 
 function eventTitle(event, state) {
   const tank = eventTankName(event, state);
-  const actor = tank ? tank + " · " : "";
+  const actor = tank ? tank + " - " : "";
   if (event.type === "skill") return actor + "Skill " + (event.action || "") + " " + displaySkill(skillNameForEvent(event));
   if (event.type === "tank" && event.action === "go") return actor + "Move";
   if (event.type === "tank" && event.action === "turn") return actor + "Turn";
   if (event.type === "tank" && event.action === "teleport") return actor + "Teleport";
   if (event.type === "tank" && event.action === "crashed") return actor + "Crashed";
   if (event.type === "bullet" && event.action === "created") return actor + "Fire";
+  if (event.type === "bullet" && event.action === "mound") return actor + "Mound destroyed";
   if (event.type === "bullet") return actor + "Bullet " + (event.action || "");
   if (event.type === "star" && event.action === "created") return "Star created";
   if (event.type === "star" && event.action === "collected") return actor + "Star collected";
@@ -745,8 +800,17 @@ function eventTitle(event, state) {
 function eventMeta(event, state) {
   const parts = [];
   if (event.direction) parts.push("dir " + event.direction);
-  if (event.position) parts.push("pos " + formatPoint(event.position));
-  if (event.at) parts.push("pos " + formatPoint(event.at));
+  const bullet = event.type === "bullet" && event.objectId
+    ? state.bullets.find(function (item) { return item.id === event.objectId; })
+    : null;
+  let point = eventPoint(event);
+  if (!point && event.type === "bullet" && event.action === "created") {
+    const tankPosition = clonePoint(event.tank?.position);
+    const direction = event.direction || event.tank?.direction || "right";
+    point = tankPosition ? step(tankPosition, direction) : null;
+  }
+  point = point || bullet?.position;
+  if (point) parts.push("pos " + formatPoint(point));
   if (event.durationFrames) parts.push("duration " + event.durationFrames + "f");
   if (event.reverse) parts.push("reverse");
   if (event.reason) parts.push("reason " + event.reason);
@@ -754,7 +818,7 @@ function eventMeta(event, state) {
   if (target) parts.push("target " + target);
   if (event.objectId) parts.push("id " + String(event.objectId).slice(0, 8));
   if (event.text) parts.push(event.text);
-  return parts.join(" · ");
+  return parts.join(" - ");
 }
 
 function recentBehaviorRows(limit) {
@@ -776,7 +840,7 @@ function renderBehaviorList() {
   }
   return '<div class="events-title"><span>Behavior Data</span><span>recent ' + rows.length + '</span></div>' +
     '<div class="event-list">' + rows.map(function (row) {
-      const kind = row.event.type === "skill" ? " skill" : "";
+      const kind = row.event.type === "skill" ? " skill" : row.event.type === "bullet" && row.event.action === "mound" ? " mound" : "";
       const currentClass = row.frameIndex === current ? " current" : "";
       return '<div class="event-row' + kind + currentClass + '">' +
         '<div class="event-frame">#' + row.frameIndex + '</div>' +
@@ -817,6 +881,28 @@ function draw() {
     ctx.arc(ox + (state.star[0] + 0.5) * tile, oy + (state.star[1] + 0.5) * tile, tile * 0.28, 0, Math.PI * 2);
     ctx.fill();
   }
+
+  (state.impacts || []).forEach(function (impact) {
+    if (impact.type !== "mound" || !impact.position) return;
+    const x = ox + (impact.position[0] + 0.5) * tile;
+    const y = oy + (impact.position[1] + 0.5) * tile;
+    ctx.save();
+    ctx.strokeStyle = "#f8b35d";
+    ctx.fillStyle = "#f8b35d";
+    ctx.globalAlpha = 0.85;
+    ctx.lineWidth = Math.max(2, tile * 0.06);
+    ctx.beginPath();
+    ctx.arc(x, y, tile * 0.34, 0, Math.PI * 2);
+    ctx.stroke();
+    for (let i = 0; i < 8; i += 1) {
+      const angle = (Math.PI * 2 * i) / 8;
+      ctx.beginPath();
+      ctx.moveTo(x + Math.cos(angle) * tile * 0.16, y + Math.sin(angle) * tile * 0.16);
+      ctx.lineTo(x + Math.cos(angle) * tile * 0.42, y + Math.sin(angle) * tile * 0.42);
+      ctx.stroke();
+    }
+    ctx.restore();
+  });
 
   state.bullets.forEach(function (bullet) {
     const owner = state.tanks.findIndex(function (tank) { return tank.name === bullet.tank; });
