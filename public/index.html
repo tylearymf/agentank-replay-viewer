@@ -416,6 +416,34 @@ function tankByName(state, name) {
   return state.tanks.find(function (tank) { return tank.name === name; }) || null;
 }
 
+function tankByPosition(state, position) {
+  const point = normalizePoint(position);
+  if (!point) return null;
+  return state.tanks.find(function (tank) {
+    return tank.position[0] === point[0] && tank.position[1] === point[1];
+  }) || null;
+}
+
+function bulletImpactTank(state, event) {
+  return tankByObject(state, event.targetObjectId)
+    || tankByObject(state, event.hitObjectId)
+    || tankByObject(state, event.victimObjectId)
+    || tankByObject(state, event.blockedByObjectId)
+    || tankByObject(state, event.target?.id)
+    || tankByObject(state, event.hitTank?.id)
+    || tankByObject(state, event.victim?.id)
+    || tankByPosition(state, eventPoint(event));
+}
+
+function breakShieldOnBulletImpact(state, event, frame) {
+  if (event.action !== "blocked" && event.action !== "hit") return;
+  const target = bulletImpactTank(state, event);
+  if (!target?.activeSkills?.shield) return;
+  delete target.activeSkills.shield;
+  target.skillPulse = { skill: "shield", action: "expired" };
+  target.lastSkill = "blocked bullet @ " + frame;
+}
+
 function enemyOfTank(state, tank) {
   if (!tank) return null;
   return state.tanks.find(function (candidate) { return candidate !== tank; }) || null;
@@ -541,6 +569,7 @@ function applyOfficialEvent(state, event, frame) {
       }
     }
     if (event.action === "crashed" || event.action === "hit" || event.action === "blocked" || event.action === "mound") {
+      breakShieldOnBulletImpact(state, event, frame);
       const index = state.bullets.findIndex(function (item) { return item.id === event.objectId; });
       if (index >= 0) state.bullets.splice(index, 1);
     }
