@@ -1,0 +1,939 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AgenTank Official Replay Loader</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #111316;
+      --panel: #191d22;
+      --panel-2: #20262d;
+      --line: #303842;
+      --text: #eef2f5;
+      --muted: #9aa6b2;
+      --left: #39a7ff;
+      --right: #ff6b6b;
+      --star: #ffd84d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: minmax(420px, 1fr) 360px;
+      gap: 18px;
+      padding: 18px;
+    }
+    .stage, aside {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    .stage {
+      display: grid;
+      grid-template-rows: auto auto auto;
+      align-content: center;
+      min-height: calc(100vh - 36px);
+      overflow: hidden;
+    }
+    canvas {
+      width: min(100%, calc(100vh - 220px));
+      height: auto;
+      aspect-ratio: 1 / 1;
+      background: #0d0f12;
+      display: block;
+      justify-self: center;
+    }
+    .loader, .controls {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      gap: 8px;
+      padding: 10px;
+      border-top: 1px solid var(--line);
+      background: #15191e;
+    }
+    .controls {
+      grid-template-columns: repeat(5, minmax(0, 1fr)) 96px;
+    }
+    input[type="file"], input[type="url"], button, select {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel-2);
+      color: var(--text);
+      padding: 9px 10px;
+      font: inherit;
+    }
+    input[type="range"] {
+      width: 100%;
+      margin: 0;
+      accent-color: var(--left);
+      background: #15191e;
+      border-top: 1px solid var(--line);
+      padding: 10px;
+    }
+    button {
+      cursor: pointer;
+      font-weight: 650;
+    }
+    aside {
+      padding: 14px;
+      display: grid;
+      grid-template-rows: auto auto auto 1fr;
+      gap: 12px;
+      min-height: calc(100vh - 36px);
+    }
+    h1 {
+      margin: 0;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+    .result, .frame, .tank {
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+    }
+    .frame {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .tank + .tank { margin-top: 10px; }
+    .tank strong {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 8px;
+      color: var(--text);
+    }
+    .tank dl {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 5px 10px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .tank dd { margin: 0; color: var(--text); }
+    .events {
+      overflow: auto;
+      border-top: 1px solid var(--line);
+      padding-top: 10px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .events-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 8px;
+      color: var(--text);
+      font-weight: 700;
+    }
+    .event-list {
+      display: grid;
+      gap: 6px;
+    }
+    .event-row {
+      display: grid;
+      grid-template-columns: 48px 1fr;
+      gap: 8px;
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #151a20;
+    }
+    .event-row.current {
+      border-color: #526171;
+      background: #1c232b;
+    }
+    .event-row.skill {
+      border-color: #7a6630;
+      background: #211f18;
+    }
+    .event-frame {
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
+    .event-main {
+      color: var(--text);
+      font-weight: 650;
+    }
+    .event-meta {
+      margin-top: 3px;
+      color: var(--muted);
+      line-height: 1.35;
+    }
+    .event-empty {
+      color: var(--muted);
+      padding: 8px 0;
+    }
+    .left { color: var(--left); }
+    .right { color: var(--right); }
+    @media (max-width: 900px) {
+      main { grid-template-columns: 1fr; }
+      .stage, aside { min-height: auto; }
+      .loader, .controls { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <section class="stage">
+    <canvas id="board" width="900" height="900"></canvas>
+    <input id="timeline" type="range" min="0" max="0" value="0">
+    <div class="loader">
+      <input id="file" type="file" accept=".json,application/json">
+      <input id="url" type="url" placeholder="https://agentank.ai/history/mat_... or mat_...">
+      <button id="loadUrl" type="button">Load URL</button>
+    </div>
+    <div class="controls">
+      <button id="back10" type="button">后退 10</button>
+      <button id="prev" type="button">上一帧</button>
+      <button id="play" type="button">播放</button>
+      <button id="next" type="button">下一帧</button>
+      <button id="forward10" type="button">前进 10</button>
+      <select id="speed" aria-label="播放速度">
+        <option value="600">0.5x</option>
+        <option value="300" selected>1x</option>
+        <option value="150">2x</option>
+        <option value="75">4x</option>
+      </select>
+    </div>
+  </section>
+  <aside>
+    <h1>AgenTank Official Replay</h1>
+    <div class="result" id="result">Load an official AgenTank match URL or match id to begin.</div>
+    <div class="frame">
+      <span id="frameLabel">Frame 0</span>
+      <span id="eventCount">0 events</span>
+    </div>
+    <div id="tanks"></div>
+    <div class="events" id="events"></div>
+  </aside>
+</main>
+<script>
+const DIRS = { up: [0, -1], right: [1, 0], down: [0, 1], left: [-1, 0] };
+const TURN_ORDER = ["up", "right", "down", "left"];
+const canvas = document.getElementById("board");
+const ctx = canvas.getContext("2d");
+const timeline = document.getElementById("timeline");
+const playBtn = document.getElementById("play");
+const speed = document.getElementById("speed");
+const resultEl = document.getElementById("result");
+const frameLabel = document.getElementById("frameLabel");
+const eventCount = document.getElementById("eventCount");
+const tanksEl = document.getElementById("tanks");
+const eventsEl = document.getElementById("events");
+let replayModel = null;
+let frames = [];
+let current = 0;
+let timer = null;
+
+function step(pos, dir) {
+  const delta = DIRS[dir] || [0, 0];
+  return [pos[0] + delta[0], pos[1] + delta[1]];
+}
+
+function oppositeDirection(direction) {
+  if (direction === "up") return "down";
+  if (direction === "down") return "up";
+  if (direction === "left") return "right";
+  if (direction === "right") return "left";
+  return direction;
+}
+
+function directionFromDelta(from, to) {
+  if (!from || !to) return "";
+  const dx = to[0] - from[0];
+  const dy = to[1] - from[1];
+  if (Math.abs(dx) > Math.abs(dy)) return dx > 0 ? "right" : "left";
+  if (dy !== 0) return dy > 0 ? "down" : "up";
+  return "";
+}
+
+function officialTurnDirection(current, value, stunReversed) {
+  let turn = value;
+  if (stunReversed && (turn === "left" || turn === "right")) {
+    turn = turn === "left" ? "right" : "left";
+  }
+  if (turn === "left" || turn === "right") {
+    const index = TURN_ORDER.indexOf(current);
+    const delta = turn === "right" ? 1 : -1;
+    return TURN_ORDER[(index + delta + TURN_ORDER.length) % TURN_ORDER.length];
+  }
+  return TURN_ORDER.includes(turn) ? turn : current;
+}
+
+function isTile(value) {
+  return value === "x" || value === "m" || value === "o" || value === ".";
+}
+
+function isRows(value) {
+  return Array.isArray(value)
+    && value.length > 0
+    && value.every(function (row) { return typeof row === "string" && row.length > 0 && Array.from(row).every(isTile); });
+}
+
+function isRuntimeMap(value) {
+  return Array.isArray(value)
+    && value.length > 0
+    && value.every(function (col) { return Array.isArray(col) && col.length > 0 && col.every(isTile); });
+}
+
+function runtimeMapToRows(map) {
+  const height = Math.max.apply(null, map.map(function (col) { return col.length; }));
+  const rows = [];
+  for (let y = 0; y < height; y += 1) {
+    let row = "";
+    for (let x = 0; x < map.length; x += 1) row += map[x][y] || "x";
+    rows.push(row);
+  }
+  return rows;
+}
+
+function normalizeMapRows(value) {
+  if (isRows(value)) return value.slice();
+  if (isRuntimeMap(value)) return runtimeMapToRows(value);
+  if (value && Array.isArray(value.rows)) return normalizeMapRows(value.rows);
+  if (value && Array.isArray(value.mapRows)) return normalizeMapRows(value.mapRows);
+  if (value && Array.isArray(value.map)) return normalizeMapRows(value.map);
+  if (value && Array.isArray(value.tiles)) return normalizeMapRows(value.tiles);
+  return null;
+}
+
+function playerName(raw, index) {
+  return (raw.replayData && raw.replayData.names && raw.replayData.names[index])
+    || (index === 0 ? raw.participants?.challenger?.tankName : raw.participants?.defender?.tankName)
+    || "tank-" + index;
+}
+
+function inferSkill(records, objectIdToIndex, index) {
+  for (const frameEvents of records) {
+    for (const event of frameEvents || []) {
+      if (event.type !== "skill" || !event.skillType) continue;
+      const skillIndex = typeof event.by === "number" ? event.by : objectIdToIndex.get(event.sourceObjectId);
+      if (skillIndex === index) return event.skillType;
+    }
+  }
+  return "unknown";
+}
+
+function emptySkillStats() {
+  return { cast: 0, applied: 0, expired: 0 };
+}
+
+function buildReplayModel(raw) {
+  const data = raw.replayData || raw;
+  const records = data.replay && data.replay.records;
+  if (!Array.isArray(records)) {
+    if (raw.links?.raw || raw.rawReplayUrl) {
+      throw new Error("This is a summary JSON. Use the raw replay URL or download agent.json?view=raw.");
+    }
+    throw new Error("Official replay JSON must contain replayData.replay.records.");
+  }
+
+  const rows = normalizeMapRows(data.map?.map || data.map || raw.map);
+  if (!rows) throw new Error("Official replay JSON does not include a readable map.");
+
+  const players = data.replay?.meta?.players || [];
+  const mapPlayers = data.map?.players || [];
+  const names = [playerName(raw, 0), playerName(raw, 1)];
+  const objectIdToIndex = new Map();
+  players.forEach(function (player, index) {
+    if (player?.tank?.id) objectIdToIndex.set(player.tank.id, index);
+  });
+  const tanks = names.map(function (name, index) {
+    const player = players[index] || {};
+    const mapPlayer = mapPlayers[index] || {};
+    return {
+      name,
+      objectId: player.tank?.id || "",
+      skill: inferSkill(records, objectIdToIndex, index),
+      position: (player.tank?.position || mapPlayer.position || [index === 0 ? 2 : Math.max(1, rows[0].length - 3), index === 0 ? 2 : Math.max(1, rows.length - 3)]).slice(),
+      direction: player.tank?.direction || mapPlayer.direction || (index === 0 ? "right" : "left"),
+      stars: 0,
+      crashed: false,
+      reason: "",
+      activeSkills: {},
+      skillPulse: null,
+      lastSkill: "",
+      skillStats: emptySkillStats()
+    };
+  });
+
+  const result = raw.summary?.result || data.replay?.meta?.result || {};
+  return {
+    rows,
+    records,
+    names,
+    tanks,
+    objectIdToIndex,
+    mapId: data.map?.id || raw.match?.mapId || "official",
+    mapName: data.map?.name || raw.match?.mapName || "",
+    source: raw.match?.urlId || "",
+    result: {
+      winner: typeof result.winner === "number" ? names[result.winner] : (result.winner || raw.match?.winnerTankName || "draw"),
+      reason: result.reason || raw.match?.resultReason || "unknown"
+    }
+  };
+}
+
+function tankByObject(state, id) {
+  const index = replayModel.objectIdToIndex.get(id);
+  return typeof index === "number" ? state.tanks[index] : null;
+}
+
+function tankByIndex(state, index) {
+  return typeof index === "number" ? state.tanks[index] : null;
+}
+
+function tankByName(state, name) {
+  return state.tanks.find(function (tank) { return tank.name === name; }) || null;
+}
+
+function tankForSkillEvent(state, event, target) {
+  if (target && event.targetObjectId) return tankByObject(state, event.targetObjectId);
+  return tankByObject(state, event.sourceObjectId) || tankByIndex(state, event.by);
+}
+
+function skillNameForEvent(event) {
+  return event.skillType || event.skill || "skill";
+}
+
+function applySkillEvent(state, event, frame) {
+  const actor = tankForSkillEvent(state, event, false);
+  const target = tankForSkillEvent(state, event, true) || actor;
+  const skill = skillNameForEvent(event);
+  const action = event.action || "skill";
+  if (actor) {
+    actor.skillStats = actor.skillStats || emptySkillStats();
+    if (Object.prototype.hasOwnProperty.call(actor.skillStats, action)) actor.skillStats[action] += 1;
+    actor.lastSkill = action + " " + skill + " @ " + frame;
+    actor.skillPulse = { skill, action };
+  }
+  if (target) {
+    target.activeSkills = target.activeSkills || {};
+    target.skillPulse = { skill, action };
+    target.lastSkill = action + " " + skill + " @ " + frame;
+    if (action === "applied") {
+      target.activeSkills[skill] = {
+        skill,
+        source: actor?.name || "",
+        durationFrames: event.durationFrames || null,
+        remainingFrames: event.durationFrames || null,
+        untilFrame: event.durationFrames ? frame + event.durationFrames : null
+      };
+    }
+    if (action === "expired") delete target.activeSkills[skill];
+  }
+}
+
+function updateActiveSkills(state, frame) {
+  state.tanks.forEach(function (tank) {
+    tank.skillPulse = null;
+    Object.keys(tank.activeSkills || {}).forEach(function (skill) {
+      const effect = tank.activeSkills[skill];
+      if (effect.untilFrame !== null && effect.untilFrame !== undefined) {
+        effect.remainingFrames = Math.max(0, effect.untilFrame - frame);
+        if (effect.remainingFrames <= 0) delete tank.activeSkills[skill];
+      }
+    });
+  });
+}
+
+function applyOfficialEvent(state, event, frame) {
+  if (event.type === "star") {
+    if (event.action === "created") state.star = (event.position || event.at || []).slice();
+    if (event.action === "collected") {
+      const tank = tankByIndex(state, event.by);
+      if (tank) tank.stars += 1;
+      state.star = null;
+    }
+    return;
+  }
+
+  if (event.type === "tank") {
+    const tank = tankByObject(state, event.objectId) || tankByIndex(state, event.index);
+    if (!tank) return;
+    if (event.action === "turn") tank.direction = officialTurnDirection(tank.direction, event.direction, event.stunReversed);
+    if (event.action === "go") {
+      const moveDirection = directionFromDelta(tank.position, event.position);
+      if (moveDirection) tank.direction = event.reverse ? oppositeDirection(moveDirection) : moveDirection;
+      tank.position = event.position.slice();
+    }
+    if (event.action === "teleport") tank.position = event.position.slice();
+    if (event.action === "crashed") {
+      tank.crashed = true;
+      tank.reason = event.reason || "crashed";
+    }
+    return;
+  }
+
+  if (event.type === "bullet") {
+    const shooter = tankByObject(state, event.tank?.id) || tankByIndex(state, event.by);
+    const direction = event.direction || event.tank?.direction || shooter?.direction || "right";
+    if (event.action === "created") {
+      const position = event.position || (event.tank?.position ? step(event.tank.position, direction) : shooter ? step(shooter.position, direction) : [0, 0]);
+      state.bullets.push({ id: event.objectId, tank: shooter?.name || "", position: position.slice(), direction });
+      return;
+    }
+    if (event.action === "go") {
+      let bullet = state.bullets.find(function (item) { return item.id === event.objectId; });
+      if (!bullet) {
+        bullet = { id: event.objectId, tank: shooter?.name || "", position: event.position.slice(), direction };
+        state.bullets.push(bullet);
+      }
+      bullet.position = event.position.slice();
+      bullet.direction = direction;
+      return;
+    }
+    if (event.action === "mound" && event.position) {
+      state.map[event.position[1]][event.position[0]] = ".";
+    }
+    if (event.action === "crashed" || event.action === "hit" || event.action === "blocked" || event.action === "mound") {
+      const index = state.bullets.findIndex(function (item) { return item.id === event.objectId; });
+      if (index >= 0) state.bullets.splice(index, 1);
+    }
+    return;
+  }
+
+  if (event.type === "skill") {
+    applySkillEvent(state, event, frame);
+  }
+}
+
+function buildFrames() {
+  const state = {
+    map: replayModel.rows.map(function (row) { return row.split(""); }),
+    star: null,
+    bullets: [],
+    tanks: replayModel.tanks.map(function (tank) { return JSON.parse(JSON.stringify(tank)); })
+  };
+  const result = [];
+  for (let frame = 0; frame < replayModel.records.length; frame += 1) {
+    const events = replayModel.records[frame] || [];
+    updateActiveSkills(state, frame);
+    events.forEach(function (event) { applyOfficialEvent(state, event, frame); });
+    result.push(JSON.parse(JSON.stringify({ frame, events, state })));
+  }
+  return result;
+}
+
+async function loadOfficialPayload(payload) {
+  replayModel = buildReplayModel(payload);
+  frames = buildFrames();
+  current = 0;
+  timeline.max = String(Math.max(0, frames.length - 1));
+  timeline.value = "0";
+  resultEl.textContent = "Winner: " + replayModel.result.winner + " / Reason: " + replayModel.result.reason + " / Map: " + replayModel.mapId;
+  draw();
+}
+
+async function loadText(text) {
+  const payload = JSON.parse(String(text).replace(/^\uFEFF/, ""));
+  await loadOfficialPayload(payload);
+}
+
+async function parseJsonResponse(response, source) {
+  if (!response.ok) throw new Error(response.status + " " + response.statusText + ": " + source);
+  return JSON.parse((await response.text()).replace(/^\uFEFF/, ""));
+}
+
+function canUseOfficialProxy(source) {
+  if (!/^https?:$/.test(location.protocol)) return false;
+  try {
+    const url = new URL(source);
+    return url.hostname === "agentank.ai" && url.pathname.startsWith("/api/matches/");
+  } catch {
+    return false;
+  }
+}
+
+function matchIdFromSource(source) {
+  const found = String(source || "").match(/\bmat_[A-Za-z0-9]+\b/);
+  return found ? found[0] : "";
+}
+
+function officialAgentJsonUrl(matchId) {
+  return "https://agentank.ai/api/matches/" + matchId + "/agent.json";
+}
+
+function normalizeOfficialUrl(source) {
+  const text = String(source || "").trim();
+  const matchId = matchIdFromSource(text);
+  try {
+    const url = new URL(text);
+    if (url.hostname === "agentank.ai") {
+      url.protocol = "https:";
+      if (matchId && !url.pathname.startsWith("/api/matches/")) return officialAgentJsonUrl(matchId);
+      return url.toString();
+    }
+  } catch {
+    if (matchId) return officialAgentJsonUrl(matchId);
+    return text;
+  }
+  if (matchId) return officialAgentJsonUrl(matchId);
+  return text;
+}
+
+async function fetchOfficialJson(source) {
+  const normalizedSource = normalizeOfficialUrl(source);
+  const attempts = [normalizedSource];
+  if (canUseOfficialProxy(normalizedSource)) attempts.push("/official-replay-proxy?url=" + encodeURIComponent(normalizedSource));
+  let lastError = null;
+  for (const target of attempts) {
+    try {
+      return await parseJsonResponse(await fetch(target, { headers: { accept: "application/json" } }), normalizedSource);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (location.protocol === "file:" && /^https?:\/\//i.test(normalizedSource)) {
+    throw new Error("Browser blocked URL fetch by CORS. Run node serve-official-replay-loader.mjs and open http://127.0.0.1:5177/");
+  }
+  throw lastError || new Error("Fetch failed: " + normalizedSource);
+}
+
+function directionAngle(direction) {
+  if (direction === "right") return 0;
+  if (direction === "down") return Math.PI / 2;
+  if (direction === "left") return Math.PI;
+  return -Math.PI / 2;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function formatPoint(value) {
+  return Array.isArray(value) ? "[" + value.join(", ") + "]" : "";
+}
+
+function skillColor(skill) {
+  const colors = {
+    boost: "#67e8f9",
+    cloak: "#a78bfa",
+    freeze: "#93c5fd",
+    poison: "#86efac",
+    shield: "#fde68a",
+    stun: "#fca5a5",
+    overload: "#f9a8d4"
+  };
+  return colors[skill] || "#ffd84d";
+}
+
+function activeSkillNames(tank) {
+  return Object.keys(tank.activeSkills || {});
+}
+
+function displaySkill(skill) {
+  return skill || "skill";
+}
+
+function drawTank(tank, index, tile, ox, oy) {
+  const x = ox + (tank.position[0] + 0.5) * tile;
+  const y = oy + (tank.position[1] + 0.5) * tile;
+  const activeSkills = activeSkillNames(tank);
+  if (activeSkills.length) {
+    ctx.save();
+    activeSkills.forEach(function (skill, skillIndex) {
+      ctx.strokeStyle = skillColor(skill);
+      ctx.globalAlpha = 0.72;
+      ctx.lineWidth = Math.max(2, tile * 0.055);
+      ctx.setLineDash([Math.max(4, tile * 0.16), Math.max(3, tile * 0.1)]);
+      ctx.beginPath();
+      ctx.arc(x, y, tile * (0.46 + skillIndex * 0.08), 0, Math.PI * 2);
+      ctx.stroke();
+    });
+    ctx.restore();
+  }
+  if (tank.skillPulse) {
+    ctx.save();
+    ctx.strokeStyle = skillColor(tank.skillPulse.skill);
+    ctx.fillStyle = skillColor(tank.skillPulse.skill);
+    ctx.globalAlpha = tank.skillPulse.action === "expired" ? 0.25 : 0.38;
+    ctx.beginPath();
+    ctx.arc(x, y, tile * 0.68, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 0.95;
+    ctx.lineWidth = Math.max(2, tile * 0.07);
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.arc(x, y, tile * 0.72, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(directionAngle(tank.direction));
+  ctx.fillStyle = index === 0 ? "#39a7ff" : "#ff6b6b";
+  ctx.strokeStyle = tank.crashed ? "#ffffff" : "#0b1015";
+  ctx.lineWidth = Math.max(2, tile * 0.05);
+  ctx.globalAlpha = tank.crashed ? 0.45 : activeSkills.includes("cloak") ? 0.58 : 1;
+  ctx.fillRect(-tile * 0.34, -tile * 0.28, tile * 0.68, tile * 0.56);
+  ctx.strokeRect(-tile * 0.34, -tile * 0.28, tile * 0.68, tile * 0.56);
+  ctx.fillStyle = "#edf6ff";
+  ctx.fillRect(tile * 0.1, -tile * 0.07, tile * 0.36, tile * 0.14);
+  ctx.restore();
+  if (tank.skillPulse || activeSkills.length) {
+    const label = tank.skillPulse ? displaySkill(tank.skillPulse.skill) : activeSkills.map(displaySkill).join(",");
+    ctx.save();
+    ctx.font = "700 " + Math.max(10, Math.floor(tile * 0.2)) + "px ui-sans-serif, system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = tank.skillPulse ? skillColor(tank.skillPulse.skill) : skillColor(activeSkills[0]);
+    ctx.strokeStyle = "#0d0f12";
+    ctx.lineWidth = Math.max(2, tile * 0.04);
+    ctx.strokeText(label, x, y - tile * 0.65);
+    ctx.fillText(label, x, y - tile * 0.65);
+    ctx.restore();
+  }
+}
+
+function eventTankName(event, state) {
+  if (event.tank) return event.tank;
+  if (event.type === "skill") {
+    return tankForSkillEvent(state, event, false)?.name || "";
+  }
+  if (event.type === "bullet") {
+    return tankByObject(state, event.tank?.id)?.name || tankByIndex(state, event.by)?.name || "";
+  }
+  if (event.type === "tank") {
+    return tankByObject(state, event.objectId)?.name || tankByIndex(state, event.index)?.name || "";
+  }
+  if (event.type === "star" && typeof event.by === "number") return tankByIndex(state, event.by)?.name || "";
+  return "";
+}
+
+function eventTargetName(event, state) {
+  if (event.targetObjectId) return tankByObject(state, event.targetObjectId)?.name || "";
+  return "";
+}
+
+function eventTitle(event, state) {
+  const tank = eventTankName(event, state);
+  const actor = tank ? tank + " · " : "";
+  if (event.type === "skill") return actor + "Skill " + (event.action || "") + " " + displaySkill(skillNameForEvent(event));
+  if (event.type === "tank" && event.action === "go") return actor + "Move";
+  if (event.type === "tank" && event.action === "turn") return actor + "Turn";
+  if (event.type === "tank" && event.action === "teleport") return actor + "Teleport";
+  if (event.type === "tank" && event.action === "crashed") return actor + "Crashed";
+  if (event.type === "bullet" && event.action === "created") return actor + "Fire";
+  if (event.type === "bullet") return actor + "Bullet " + (event.action || "");
+  if (event.type === "star" && event.action === "created") return "Star created";
+  if (event.type === "star" && event.action === "collected") return actor + "Star collected";
+  if (event.type === "speech") return actor + "Speech";
+  return actor + event.type + " " + (event.action || "");
+}
+
+function eventMeta(event, state) {
+  const parts = [];
+  if (event.direction) parts.push("dir " + event.direction);
+  if (event.position) parts.push("pos " + formatPoint(event.position));
+  if (event.at) parts.push("pos " + formatPoint(event.at));
+  if (event.durationFrames) parts.push("duration " + event.durationFrames + "f");
+  if (event.reverse) parts.push("reverse");
+  if (event.reason) parts.push("reason " + event.reason);
+  const target = eventTargetName(event, state);
+  if (target) parts.push("target " + target);
+  if (event.objectId) parts.push("id " + String(event.objectId).slice(0, 8));
+  if (event.text) parts.push(event.text);
+  return parts.join(" · ");
+}
+
+function recentBehaviorRows(limit) {
+  const rows = [];
+  for (let frameIndex = current; frameIndex >= 0 && rows.length < limit; frameIndex -= 1) {
+    const frame = frames[frameIndex];
+    const frameEvents = frame?.events || [];
+    for (let index = frameEvents.length - 1; index >= 0 && rows.length < limit; index -= 1) {
+      rows.push({ frameIndex, event: frameEvents[index], state: frame.state });
+    }
+  }
+  return rows;
+}
+
+function renderBehaviorList() {
+  const rows = recentBehaviorRows(20);
+  if (!rows.length) {
+    return '<div class="events-title"><span>Behavior Data</span><span>0</span></div><div class="event-empty">No behavior events yet.</div>';
+  }
+  return '<div class="events-title"><span>Behavior Data</span><span>recent ' + rows.length + '</span></div>' +
+    '<div class="event-list">' + rows.map(function (row) {
+      const kind = row.event.type === "skill" ? " skill" : "";
+      const currentClass = row.frameIndex === current ? " current" : "";
+      return '<div class="event-row' + kind + currentClass + '">' +
+        '<div class="event-frame">#' + row.frameIndex + '</div>' +
+        '<div><div class="event-main">' + escapeHtml(eventTitle(row.event, row.state)) + '</div>' +
+        '<div class="event-meta">' + escapeHtml(eventMeta(row.event, row.state) || "-") + '</div></div>' +
+        '</div>';
+    }).join("") + '</div>';
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#0d0f12";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  if (!frames.length) return;
+
+  const frame = frames[current];
+  const state = frame.state;
+  const rows = state.map;
+  const h = rows.length;
+  const w = rows[0].length;
+  const tile = Math.floor(Math.min(canvas.width / w, canvas.height / h));
+  const ox = Math.floor((canvas.width - tile * w) / 2);
+  const oy = Math.floor((canvas.height - tile * h) / 2);
+
+  for (let y = 0; y < h; y += 1) {
+    for (let x = 0; x < w; x += 1) {
+      const tileValue = rows[y][x];
+      ctx.fillStyle = tileValue === "x" ? "#2d3540" : tileValue === "m" ? "#80664b" : tileValue === "o" ? "#264d3c" : "#171d22";
+      ctx.fillRect(ox + x * tile, oy + y * tile, tile, tile);
+      ctx.strokeStyle = "#222a32";
+      ctx.strokeRect(ox + x * tile, oy + y * tile, tile, tile);
+    }
+  }
+
+  if (state.star) {
+    ctx.fillStyle = "#ffd84d";
+    ctx.beginPath();
+    ctx.arc(ox + (state.star[0] + 0.5) * tile, oy + (state.star[1] + 0.5) * tile, tile * 0.28, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  state.bullets.forEach(function (bullet) {
+    const owner = state.tanks.findIndex(function (tank) { return tank.name === bullet.tank; });
+    ctx.fillStyle = owner === 0 ? "#bde4ff" : "#ffc7c7";
+    ctx.beginPath();
+    ctx.arc(ox + (bullet.position[0] + 0.5) * tile, oy + (bullet.position[1] + 0.5) * tile, tile * 0.16, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  state.tanks.forEach(function (tank, index) { drawTank(tank, index, tile, ox, oy); });
+
+  frameLabel.textContent = "Frame " + current + " / " + Math.max(0, frames.length - 1);
+  eventCount.textContent = frame.events.length + " events";
+  tanksEl.innerHTML = state.tanks.map(function (tank, index) {
+    const cls = index === 0 ? "left" : "right";
+    const skills = activeSkillNames(tank).map(function (skill) {
+      const effect = tank.activeSkills[skill];
+      return skill + (effect?.remainingFrames ? " " + effect.remainingFrames + "f" : "");
+    }).join(", ") || "-";
+    const stats = tank.skillStats || emptySkillStats();
+    return '<section class="tank"><strong><span class="' + cls + '">' + escapeHtml(tank.name) + '</span><span>' + escapeHtml(tank.skill) + '</span></strong><dl>' +
+      '<dt>Position</dt><dd>[' + tank.position.join(", ") + ']</dd>' +
+      '<dt>Direction</dt><dd>' + escapeHtml(tank.direction) + '</dd>' +
+      '<dt>Stars</dt><dd>' + tank.stars + '</dd>' +
+      '<dt>Skill uses</dt><dd>' + stats.cast + '</dd>' +
+      '<dt>Active skill</dt><dd>' + escapeHtml(skills) + '</dd>' +
+      '<dt>Last skill</dt><dd>' + escapeHtml(tank.lastSkill || "-") + '</dd>' +
+      '<dt>Status</dt><dd>' + escapeHtml(tank.crashed ? "crashed " + tank.reason : "active") + '</dd>' +
+      '</dl></section>';
+  }).join("");
+  eventsEl.innerHTML = renderBehaviorList();
+  timeline.value = String(current);
+}
+
+function setFrame(value) {
+  if (!frames.length) return;
+  current = Math.max(0, Math.min(frames.length - 1, value));
+  draw();
+}
+
+function stop() {
+  if (timer) clearInterval(timer);
+  timer = null;
+  playBtn.textContent = "播放";
+}
+
+function play() {
+  if (!frames.length) return;
+  if (timer) {
+    stop();
+    return;
+  }
+  playBtn.textContent = "暂停";
+  timer = setInterval(function () {
+    if (current >= frames.length - 1) {
+      stop();
+      return;
+    }
+    setFrame(current + 1);
+  }, Number(speed.value));
+}
+
+document.getElementById("file").addEventListener("change", async function () {
+  const file = this.files && this.files[0];
+  if (!file) return;
+  stop();
+  try {
+    await loadText(await file.text());
+  } catch (error) {
+    resultEl.textContent = "Load failed: " + (error.message || error);
+  }
+});
+
+async function loadUrlSource(source) {
+  if (!source) return;
+  stop();
+  try {
+    let payload = await fetchOfficialJson(source);
+    if (!payload.replayData?.replay?.records && (payload.links?.raw || payload.rawReplayUrl)) {
+      payload = await fetchOfficialJson(payload.links?.raw || payload.rawReplayUrl);
+    }
+    await loadOfficialPayload(payload);
+  } catch (error) {
+    resultEl.textContent = "Load failed: " + (error.message || error);
+  }
+}
+
+document.getElementById("loadUrl").addEventListener("click", async function () {
+  await loadUrlSource(document.getElementById("url").value.trim());
+});
+
+document.getElementById("back10").addEventListener("click", function () { stop(); setFrame(current - 10); });
+document.getElementById("prev").addEventListener("click", function () { stop(); setFrame(current - 1); });
+document.getElementById("play").addEventListener("click", play);
+document.getElementById("next").addEventListener("click", function () { stop(); setFrame(current + 1); });
+document.getElementById("forward10").addEventListener("click", function () { stop(); setFrame(current + 10); });
+speed.addEventListener("change", function () { if (timer) { stop(); play(); } });
+timeline.addEventListener("input", function () { stop(); setFrame(Number(timeline.value)); });
+window.addEventListener("keydown", function (event) {
+  if (event.key === " ") {
+    event.preventDefault();
+    play();
+  } else if (event.key === "ArrowLeft") {
+    stop();
+    setFrame(current - 1);
+  } else if (event.key === "ArrowRight") {
+    stop();
+    setFrame(current + 1);
+  }
+});
+
+draw();
+const initialSource = new URLSearchParams(location.search).get("match") || decodeURIComponent(location.hash.replace(/^#/, ""));
+if (initialSource) {
+  document.getElementById("url").value = initialSource;
+  loadUrlSource(initialSource);
+}
+</script>
+</body>
+</html>
