@@ -70,6 +70,43 @@ async function handleProxy(reqUrl, res) {
   });
 }
 
+function clampInteger(value, fallback, min, max) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
+}
+
+function officialTankMatchesUrl(limit, offset) {
+  const url = new URL("https://agentank.ai/api/agent/tank/matches");
+  url.searchParams.set("limit", String(limit));
+  url.searchParams.set("offset", String(offset));
+  return url;
+}
+
+async function handleAgentTankMatches(reqUrl, req, res, fetchImpl) {
+  const authorization = String(req.headers.authorization || "").trim();
+  if (!/^Bearer\s+\S+/i.test(authorization)) {
+    send(res, 401, "Tank key is required in the Authorization header.", {
+      "content-type": "text/plain; charset=utf-8"
+    });
+    return;
+  }
+
+  const limit = clampInteger(reqUrl.searchParams.get("limit"), 50, 1, 50);
+  const offset = clampInteger(reqUrl.searchParams.get("offset"), 0, 0, Number.MAX_SAFE_INTEGER);
+  const response = await fetchImpl(officialTankMatchesUrl(limit, offset), {
+    headers: {
+      accept: "application/json",
+      authorization
+    }
+  });
+  const body = await response.text();
+  send(res, response.status, body, {
+    "access-control-allow-origin": "*",
+    "content-type": response.headers.get("content-type") || "application/json; charset=utf-8"
+  });
+}
+
 function safePublicPath(urlPathname) {
   const normalizedPathname = decodeURIComponent(urlPathname === "/" ? "/index.html" : urlPathname);
   const resolved = path.resolve(PUBLIC_DIR, "." + normalizedPathname);
@@ -90,34 +127,40 @@ async function handleStatic(reqUrl, res) {
   send(res, 200, await readFile(filePath), { "content-type": type });
 }
 
-const server = http.createServer(async (req, res) => {
-  try {
-    const reqUrl = new URL(req.url || "/", "http://127.0.0.1");
-    if (req.method === "OPTIONS") {
-      send(res, 204, "", {
-        "access-control-allow-origin": "*",
-        "access-control-allow-methods": "GET, OPTIONS",
-        "access-control-allow-headers": "accept, content-type"
-      });
-      return;
+export function createReplayViewerServer({ fetchImpl = fetch } = {}) {
+  return http.createServer(async (req, res) => {
+    try {
+      const reqUrl = new URL(req.url || "/", "http://127.0.0.1");
+      if (req.method === "OPTIONS") {
+        send(res, 204, "", {
+          "access-control-allow-origin": "*",
+          "access-control-allow-methods": "GET, OPTIONS",
+          "access-control-allow-headers": "accept, authorization, content-type"
+        });
+        return;
+      }
+      if (req.method !== "GET") {
+        send(res, 405, "Method not allowed", { "content-type": "text/plain; charset=utf-8" });
+        return;
+      }
+      if (reqUrl.pathname === "/official-replay-proxy") {
+        await handleProxy(reqUrl, res);
+        return;
+      }
+      if (reqUrl.pathname === "/agent-tank-matches") {
+        await handleAgentTankMatches(reqUrl, req, res, fetchImpl);
+        return;
+      }
+      await handleStatic(reqUrl, res);
+    } catch (error) {
+      const message = String(error.message || error);
+      const status = message === "Not found" ? 404 : 500;
+      send(res, status, message, { "content-type": "text/plain; charset=utf-8" });
     }
-    if (req.method !== "GET") {
-      send(res, 405, "Method not allowed", { "content-type": "text/plain; charset=utf-8" });
-      return;
-    }
-    if (reqUrl.pathname === "/official-replay-proxy") {
-      await handleProxy(reqUrl, res);
-      return;
-    }
-    await handleStatic(reqUrl, res);
-  } catch (error) {
-    const message = String(error.message || error);
-    const status = message === "Not found" ? 404 : 500;
-    send(res, status, message, { "content-type": "text/plain; charset=utf-8" });
-  }
-});
+  });
+}
 
-function listen(port) {
+function listen(server, port) {
   return new Promise((resolve, reject) => {
     const onError = (error) => {
       server.off("listening", onListening);
@@ -133,26 +176,33 @@ function listen(port) {
   });
 }
 
-const requestedPort = Number(arg("port", process.env.PORT || String(DEFAULT_PORT)));
-let activePort = null;
-for (let port = requestedPort; port < requestedPort + 20; port += 1) {
-  try {
-    activePort = await listen(port);
-    break;
-  } catch (error) {
-    if (error.code !== "EADDRINUSE") throw error;
+async function start() {
+  const server = createReplayViewerServer();
+  const requestedPort = Number(arg("port", process.env.PORT || String(DEFAULT_PORT)));
+  let activePort = null;
+  for (let port = requestedPort; port < requestedPort + 20; port += 1) {
+    try {
+      activePort = await listen(server, port);
+      break;
+    } catch (error) {
+      if (error.code !== "EADDRINUSE") throw error;
+    }
   }
+
+  if (!activePort) {
+    throw new Error(`No free port found from ${requestedPort} to ${requestedPort + 19}.`);
+  }
+
+  const localUrl = `http://127.0.0.1:${activePort}/`;
+  const sampleMatch = "mat_6i5lPWY81tqAkHfge";
+  console.log("");
+  console.log("AgenTank replay viewer started");
+  console.log(`Access URL: ${localUrl}`);
+  console.log(`Sample replay: ${localUrl}?match=${sampleMatch}`);
+  console.log("Stop server: Ctrl+C");
+  console.log("");
 }
 
-if (!activePort) {
-  throw new Error(`No free port found from ${requestedPort} to ${requestedPort + 19}.`);
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  await start();
 }
-
-const localUrl = `http://127.0.0.1:${activePort}/`;
-const sampleMatch = "mat_6i5lPWY81tqAkHfge";
-console.log("");
-console.log("AgenTank replay viewer started");
-console.log(`Access URL: ${localUrl}`);
-console.log(`Sample replay: ${localUrl}?match=${sampleMatch}`);
-console.log("Stop server: Ctrl+C");
-console.log("");

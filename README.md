@@ -7,6 +7,7 @@ Standalone local replay viewer for official AgenTank match payloads.
 - Skill casts are highlighted on the board with a colored pulse, active skill ring, and skill label.
 - The right panel shows tank skill usage, active skill duration, and last skill event.
 - The behavior list shows recent frame-by-frame actions such as movement, turns, shots, stars, crashes, and skill events.
+- The right panel can load your tank's recent recorded matches with a local tank-key proxy, page through 50 matches at a time, and send any item straight into the local replay viewer.
 - Bullets follow the official two-cell-per-frame movement when positions must be inferred, and mound hits remove the mound tile from the replay map.
 - Skill effect timers use the current official rules: shield up to 4f and breaks on bullet block, freeze 2f, stun 6f, overload 10f, cloak 8f, poison 4f, and boost 6f.
 
@@ -39,3 +40,4 @@ http://127.0.0.1:5177/?match=https%3A%2F%2Fagentank.ai%2Fhistory%2Fmat_6i5lPWY81
 - `https://agentank.ai/api/matches/mat_.../agent.json?view=raw`
 
 The local server includes a tiny proxy for official AgenTank match JSON, so the browser can load replays without CORS issues.
+It also proxies `GET /api/agent/tank/matches` for the recent-battle list; the tank key is sent as a local `Authorization` header and is not placed in the URL.

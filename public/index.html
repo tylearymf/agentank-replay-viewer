@@ -62,7 +62,7 @@
     .controls {
       grid-template-columns: repeat(5, minmax(0, 1fr)) 96px;
     }
-    input[type="file"], input[type="url"], button, select {
+    input[type="file"], input[type="password"], input[type="url"], button, select {
       width: 100%;
       border: 1px solid var(--line);
       border-radius: 6px;
@@ -86,7 +86,7 @@
     aside {
       padding: 14px;
       display: grid;
-      grid-template-rows: auto auto auto 1fr;
+      grid-template-rows: auto auto auto auto auto 1fr;
       gap: 12px;
       min-height: calc(100vh - 36px);
     }
@@ -95,11 +95,105 @@
       font-size: 18px;
       letter-spacing: 0;
     }
-    .result, .frame, .tank {
+    .history, .result, .frame, .tank {
       background: var(--panel-2);
       border: 1px solid var(--line);
       border-radius: 8px;
       padding: 10px;
+    }
+    .history {
+      display: grid;
+      gap: 9px;
+    }
+    .history-head, .history-pager {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .history-title {
+      font-weight: 700;
+    }
+    .history-status {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .history-key {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 82px;
+      gap: 8px;
+    }
+    .history-pager {
+      grid-template-columns: 1fr auto 1fr;
+    }
+    .history-pager button {
+      min-width: 76px;
+      padding: 7px 9px;
+      font-size: 13px;
+    }
+    .history-page {
+      color: var(--muted);
+      font-size: 12px;
+      text-align: center;
+      white-space: nowrap;
+    }
+    .match-list {
+      display: grid;
+      gap: 7px;
+      max-height: 42vh;
+      overflow: auto;
+      padding-right: 2px;
+    }
+    .match-item {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 72px;
+      gap: 8px;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #151a20;
+      padding: 8px;
+    }
+    .match-main {
+      min-width: 0;
+    }
+    .match-versus {
+      display: flex;
+      gap: 5px;
+      align-items: center;
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1.25;
+    }
+    .match-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .match-vs {
+      color: var(--muted);
+      flex: 0 0 auto;
+      font-weight: 600;
+    }
+    .match-meta, .match-result {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .match-result {
+      color: var(--text);
+    }
+    .match-item button {
+      padding: 7px 8px;
+      font-size: 13px;
+    }
+    .match-empty {
+      color: var(--muted);
+      font-size: 13px;
+      padding: 6px 0;
     }
     .frame {
       display: flex;
@@ -188,6 +282,7 @@
       main { grid-template-columns: 1fr; }
       .stage, aside { min-height: auto; }
       .loader, .controls { grid-template-columns: 1fr; }
+      .match-list { max-height: none; }
     }
   </style>
 </head>
@@ -217,6 +312,24 @@
   </section>
   <aside>
     <h1>AgenTank Official Replay</h1>
+    <section class="history" aria-label="最近战斗">
+      <div class="history-head">
+        <span class="history-title">最近战斗</span>
+        <span class="history-status" id="matchStatus">输入 tank key 后加载最近 50 场。</span>
+      </div>
+      <div class="history-key">
+        <input id="tankKey" type="password" placeholder="tank key" autocomplete="off">
+        <button id="loadMatches" type="button">刷新</button>
+      </div>
+      <div class="history-pager">
+        <button id="prevMatches" type="button">上一页</button>
+        <span class="history-page" id="matchPage">1-50</span>
+        <button id="nextMatches" type="button">下一页</button>
+      </div>
+      <div class="match-list" id="matchList">
+        <div class="match-empty">还没有加载战斗列表。</div>
+      </div>
+    </section>
     <div class="result" id="result">Load an official AgenTank match URL or match id to begin.</div>
     <div class="frame">
       <span id="frameLabel">Frame 0</span>
@@ -249,10 +362,22 @@ const frameLabel = document.getElementById("frameLabel");
 const eventCount = document.getElementById("eventCount");
 const tanksEl = document.getElementById("tanks");
 const eventsEl = document.getElementById("events");
+const tankKeyInput = document.getElementById("tankKey");
+const loadMatchesBtn = document.getElementById("loadMatches");
+const prevMatchesBtn = document.getElementById("prevMatches");
+const nextMatchesBtn = document.getElementById("nextMatches");
+const matchPageEl = document.getElementById("matchPage");
+const matchStatusEl = document.getElementById("matchStatus");
+const matchListEl = document.getElementById("matchList");
+const MATCH_PAGE_SIZE = 50;
 let replayModel = null;
 let frames = [];
 let current = 0;
 let timer = null;
+let matchOffset = 0;
+let matchRows = [];
+let matchHasMore = false;
+let matchLoading = false;
 
 function step(pos, dir) {
   const delta = DIRS[dir] || [0, 0];
@@ -691,6 +816,224 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
+function normalizeTankBearer(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  return /^Bearer\s+/i.test(text) ? text : "Bearer " + text;
+}
+
+function normalizeMatchPayload(payload) {
+  if (Array.isArray(payload)) return { rows: payload, hasMore: payload.length === MATCH_PAGE_SIZE };
+  const rows = payload?.matches || payload?.items || payload?.results || payload?.data || [];
+  const fallbackHasMore = Array.isArray(rows) && rows.length === MATCH_PAGE_SIZE;
+  return {
+    rows: Array.isArray(rows) ? rows : [],
+    hasMore: parseHasMore(payload?.hasMore, fallbackHasMore)
+  };
+}
+
+function pickFirst(values, fallback) {
+  for (const value of values) {
+    if (value !== null && value !== undefined && String(value).trim()) return value;
+  }
+  return fallback;
+}
+
+function parseHasMore(value, fallback) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") return value.toLowerCase() === "true";
+  return fallback;
+}
+
+function matchPlayers(match) {
+  const challenger = pickFirst([
+    match?.participants?.challenger?.tankName,
+    match?.challengerTankName,
+    match?.challenger?.tankName,
+    match?.challenger?.name,
+    match?.match?.challengerTankName,
+    match?.match?.participants?.challenger?.tankName
+  ], "Challenger");
+  const defender = pickFirst([
+    match?.participants?.defender?.tankName,
+    match?.defenderTankName,
+    match?.defender?.tankName,
+    match?.defender?.name,
+    match?.match?.defenderTankName,
+    match?.match?.participants?.defender?.tankName
+  ], "Defender");
+  return [String(challenger), String(defender)];
+}
+
+function matchWinnerName(match, players) {
+  const winner = pickFirst([
+    match?.winnerTankName,
+    match?.result?.winnerTankName,
+    match?.summary?.winnerTankName,
+    match?.summary?.result?.winner,
+    match?.match?.winnerTankName,
+    match?.match?.result?.winner
+  ], "");
+  if (typeof winner === "number") return players[winner] || "";
+  if (/^\d+$/.test(String(winner))) return players[Number(winner)] || "";
+  return String(winner || "");
+}
+
+function matchReason(match) {
+  return String(pickFirst([
+    match?.reason,
+    match?.resultReason,
+    match?.result?.reason,
+    match?.summary?.reason,
+    match?.summary?.result?.reason,
+    match?.match?.resultReason,
+    match?.match?.result?.reason
+  ], "unknown"));
+}
+
+function matchOutcome(match, players) {
+  const explicit = pickFirst([
+    match?.outcome,
+    match?.agentOutcome,
+    match?.result?.outcome,
+    match?.summary?.outcome
+  ], "");
+  if (explicit) {
+    const value = String(explicit).toLowerCase();
+    if (value.includes("win")) return "胜利";
+    if (value.includes("loss") || value.includes("lose")) return "失败";
+    if (value.includes("draw")) return "平局";
+    return String(explicit);
+  }
+  const winner = matchWinnerName(match, players);
+  return winner && winner !== "draw" ? "胜者 " + winner : "平局或未决";
+}
+
+function matchTime(match) {
+  const raw = pickFirst([
+    match?.createdAt,
+    match?.finishedAt,
+    match?.startedAt,
+    match?.updatedAt,
+    match?.match?.createdAt,
+    match?.match?.finishedAt
+  ], "");
+  if (!raw) return "时间未知";
+  const value = typeof raw === "number" && raw > 0 && raw < 1000000000000 ? raw * 1000 : raw;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(raw);
+  return date.toLocaleString();
+}
+
+function matchReplaySource(match) {
+  const source = pickFirst([
+    match?.links?.agentJson,
+    match?.links?.raw,
+    match?.agentJsonUrl,
+    match?.rawReplayUrl,
+    match?.replayUrl,
+    match?.url,
+    match?.match?.url,
+    match?.match?.humanUrl,
+    match?.historyUrl,
+    match?.matchUrlId,
+    match?.urlId,
+    match?.id
+  ], "");
+  const matchId = matchIdFromSource(source);
+  return matchId || source;
+}
+
+function hasInlineReplay(match) {
+  return Boolean(match?.replayData?.replay?.records || match?.match?.replayData?.replay?.records);
+}
+
+function renderMatchList() {
+  matchPageEl.textContent = (matchOffset + 1) + "-" + (matchOffset + MATCH_PAGE_SIZE);
+  prevMatchesBtn.disabled = matchLoading || matchOffset === 0;
+  nextMatchesBtn.disabled = matchLoading || !matchHasMore;
+  loadMatchesBtn.disabled = matchLoading;
+
+  if (matchLoading) {
+    matchListEl.innerHTML = '<div class="match-empty">正在加载...</div>';
+    return;
+  }
+  if (!matchRows.length) {
+    matchListEl.innerHTML = '<div class="match-empty">这一页没有战斗记录。</div>';
+    return;
+  }
+
+  matchListEl.innerHTML = matchRows.map(function (match, index) {
+    const players = matchPlayers(match);
+    const result = matchOutcome(match, players);
+    const reason = matchReason(match);
+    return '<article class="match-item">' +
+      '<div class="match-main">' +
+      '<div class="match-versus"><span class="match-name left">' + escapeHtml(players[0]) + '</span><span class="match-vs">vs</span><span class="match-name right">' + escapeHtml(players[1]) + '</span></div>' +
+      '<div class="match-meta">' + escapeHtml(matchTime(match)) + '</div>' +
+      '<div class="match-result">' + escapeHtml(result) + ' / ' + escapeHtml(reason) + '</div>' +
+      '</div>' +
+      '<button class="replay-match" type="button" data-index="' + index + '">回放</button>' +
+      '</article>';
+  }).join("");
+}
+
+async function loadMatchPage(offset) {
+  const authorization = normalizeTankBearer(tankKeyInput.value);
+  if (!authorization) {
+    matchStatusEl.textContent = "请先输入 tank key。";
+    return;
+  }
+  matchLoading = true;
+  matchOffset = Math.max(0, offset);
+  matchStatusEl.textContent = "正在读取最近战斗...";
+  renderMatchList();
+  try {
+    const response = await fetch("/agent-tank-matches?limit=" + MATCH_PAGE_SIZE + "&offset=" + matchOffset, {
+      headers: {
+        accept: "application/json",
+        authorization
+      }
+    });
+    const text = await response.text();
+    if (!response.ok) throw new Error(response.status + " " + response.statusText + ": " + text);
+    const payload = JSON.parse(text.replace(/^\uFEFF/, ""));
+    const normalized = normalizeMatchPayload(payload);
+    matchRows = normalized.rows;
+    matchHasMore = normalized.hasMore;
+    matchStatusEl.textContent = "已加载 " + matchRows.length + " 场。";
+  } catch (error) {
+    matchRows = [];
+    matchHasMore = false;
+    matchStatusEl.textContent = "加载失败: " + (error.message || error);
+  } finally {
+    matchLoading = false;
+    renderMatchList();
+  }
+}
+
+async function replayMatch(match) {
+  if (!match) return;
+  matchStatusEl.textContent = "正在加载回放...";
+  if (hasInlineReplay(match)) {
+    try {
+      await loadOfficialPayload(match.replayData?.replay?.records ? match : match.match);
+      matchStatusEl.textContent = "已加载回放。";
+      return;
+    } catch (error) {
+      resultEl.textContent = "Inline replay failed, trying public match JSON: " + (error.message || error);
+    }
+  }
+  const source = matchReplaySource(match);
+  if (!source) {
+    matchStatusEl.textContent = "这条记录没有可用的回放链接。";
+    return;
+  }
+  document.getElementById("url").value = source;
+  const loaded = await loadUrlSource(source);
+  matchStatusEl.textContent = loaded ? "已加载回放。" : "回放加载失败，详情见结果栏。";
+}
+
 function formatPoint(value) {
   return Array.isArray(value) ? "[" + value.join(", ") + "]" : "";
 }
@@ -1039,7 +1382,7 @@ document.getElementById("file").addEventListener("change", async function () {
 });
 
 async function loadUrlSource(source) {
-  if (!source) return;
+  if (!source) return false;
   stop();
   try {
     let payload = await fetchOfficialJson(source);
@@ -1047,13 +1390,33 @@ async function loadUrlSource(source) {
       payload = await fetchOfficialJson(payload.links?.raw || payload.rawReplayUrl);
     }
     await loadOfficialPayload(payload);
+    return true;
   } catch (error) {
     resultEl.textContent = "Load failed: " + (error.message || error);
+    return false;
   }
 }
 
 document.getElementById("loadUrl").addEventListener("click", async function () {
   await loadUrlSource(document.getElementById("url").value.trim());
+});
+
+loadMatchesBtn.addEventListener("click", function () {
+  loadMatchPage(0);
+});
+prevMatchesBtn.addEventListener("click", function () {
+  loadMatchPage(Math.max(0, matchOffset - MATCH_PAGE_SIZE));
+});
+nextMatchesBtn.addEventListener("click", function () {
+  loadMatchPage(matchOffset + MATCH_PAGE_SIZE);
+});
+tankKeyInput.addEventListener("keydown", function (event) {
+  if (event.key === "Enter") loadMatchPage(0);
+});
+matchListEl.addEventListener("click", function (event) {
+  const button = event.target.closest(".replay-match");
+  if (!button) return;
+  replayMatch(matchRows[Number(button.dataset.index)]);
 });
 
 document.getElementById("back10").addEventListener("click", function () { stop(); setFrame(current - 10); });
@@ -1077,6 +1440,7 @@ window.addEventListener("keydown", function (event) {
 });
 
 draw();
+renderMatchList();
 const initialSource = new URLSearchParams(location.search).get("match") || decodeURIComponent(location.hash.replace(/^#/, ""));
 if (initialSource) {
   document.getElementById("url").value = initialSource;
