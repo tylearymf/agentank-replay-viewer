@@ -25,31 +25,373 @@
       font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
     main {
-      min-height: 100vh;
+      height: 100vh;
       display: grid;
       grid-template-columns: minmax(420px, 1fr) 360px;
       gap: 18px;
       padding: 18px;
+      overflow: hidden;
     }
     .stage, aside {
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 8px;
+      height: calc(100vh - 36px);
+      min-height: 0;
     }
     .stage {
       display: grid;
-      grid-template-rows: auto auto auto;
-      align-content: center;
-      min-height: calc(100vh - 36px);
+      grid-template-rows: minmax(0, 1fr) auto auto auto;
       overflow: hidden;
     }
-    canvas {
-      width: min(100%, calc(100vh - 220px));
-      height: auto;
-      aspect-ratio: 1 / 1;
-      background: #0d0f12;
+    .battle-stage {
+      position: relative;
+      display: grid;
+      place-items: center;
+      min-height: min(720px, calc(100vh - 220px));
+      overflow: hidden;
+      padding: 14px;
+      background:
+        radial-gradient(circle at 50% 35%, rgba(217, 181, 93, 0.08), transparent 42%),
+        linear-gradient(180deg, #0d140d, #070c09);
+      outline: none;
+    }
+    .battle-stage:focus-visible {
+      box-shadow: inset 0 0 0 3px rgba(217, 181, 93, 0.26);
+    }
+    .battle-empty {
+      color: var(--muted);
+      font-size: 14px;
+      text-align: center;
+    }
+    .playground {
+      --tile: 50px;
+      position: relative;
+      overflow: hidden;
+      border: 3px solid #231d16;
+      background:
+        linear-gradient(180deg, rgba(255, 250, 220, 0.12), rgba(97, 83, 43, 0.08)),
+        #c7b676;
+      background-size: auto, auto, 50px 50px;
+      box-shadow:
+        inset 0 0 0 5px rgba(255, 250, 240, 0.38),
+        0 16px 40px rgba(0, 0, 0, 0.34);
+      image-rendering: pixelated;
+      transform-origin: center;
+    }
+    .tile, .star, .tank-sprite, .bullet-sprite, .impact-burst {
+      position: absolute;
+      width: var(--tile);
+      height: var(--tile);
+    }
+    .tile {
+      z-index: 1;
+      background-size: 100% 100%;
+    }
+    .tile.floor {
+      background:
+        linear-gradient(135deg, rgba(255,255,255,0.08), transparent 48%),
+        linear-gradient(315deg, rgba(94,78,38,0.08), transparent 54%),
+        #c6b675;
+    }
+    .tile.stone {
+      background:
+        linear-gradient(135deg, rgba(255,255,255,0.18), transparent 44%),
+        linear-gradient(315deg, rgba(0,0,0,0.28), transparent 48%),
+        repeating-linear-gradient(45deg, rgba(0,0,0,0.11) 0 4px, transparent 4px 12px),
+        #6a6559;
+      box-shadow: inset 0 -4px 0 rgba(0,0,0,0.22), inset 4px 0 0 rgba(255,255,255,0.08);
+    }
+    .tile.dirt {
+      background:
+        radial-gradient(circle at 34% 31%, rgba(255,240,180,0.22), transparent 21%),
+        radial-gradient(circle at 67% 62%, rgba(83,45,24,0.35), transparent 26%),
+        linear-gradient(135deg, #a78250, #6c4b31);
+      box-shadow: inset 0 -5px 0 rgba(44,25,16,0.34);
+    }
+    .tile.grass {
+      z-index: 3;
+      background:
+        repeating-linear-gradient(100deg, rgba(255,255,255,0.08) 0 3px, transparent 3px 10px),
+        radial-gradient(circle at 28% 25%, rgba(160,224,118,0.36), transparent 30%),
+        #526b37;
+      opacity: 0.62;
+      pointer-events: none;
+    }
+    .star {
+      z-index: 4;
+      transform: translate(var(--x), var(--y));
+      filter: drop-shadow(0 0 8px rgba(255, 216, 77, 0.9));
+    }
+    .star::before {
+      content: "";
+      position: absolute;
+      inset: 8px;
+      background: linear-gradient(135deg, #fff2a8, #ffbb38);
+      clip-path: polygon(50% 0, 61% 34%, 98% 35%, 68% 56%, 79% 91%, 50% 70%, 21% 91%, 32% 56%, 2% 35%, 39% 34%);
+      animation: star-pulse 900ms ease-in-out infinite alternate;
+    }
+    .tank-sprite {
+      z-index: 5;
+      transform: translate(var(--x), var(--y));
+      transition: transform var(--frame-ms, 160ms) linear, opacity 160ms ease, filter 160ms ease;
+      filter: drop-shadow(0 5px 3px rgba(0,0,0,0.34));
+      will-change: transform;
+    }
+    .tank-machine {
+      position: absolute;
+      inset: 0;
+      transform: rotate(var(--rot));
+      transition: transform var(--frame-ms, 160ms) linear;
+      transform-origin: 50% 50%;
+    }
+    .tank-sprite.crashed {
+      opacity: 0.38;
+      filter: grayscale(1) drop-shadow(0 5px 3px rgba(0,0,0,0.28));
+    }
+    .tank-sprite.cloaked {
+      opacity: 0.58;
+    }
+    .tank-sprite.in-grass .tank-machine {
+      opacity: 0.54;
+      filter: saturate(0.78) brightness(0.92);
+    }
+    .tank-sprite.in-grass .tank-hud {
+      transform: translateX(-50%) translateY(-2px);
+    }
+    .tank-aura {
+      position: absolute;
+      inset: -8px;
+      border-radius: 50%;
+      border: 3px solid transparent;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .tank-sprite.has-skill .tank-aura {
+      opacity: 0.78;
+      border-color: var(--skill-color, #ffd84d);
+      box-shadow: 0 0 14px var(--skill-color, #ffd84d);
+      animation: aura-spin 900ms linear infinite;
+    }
+    .tank-body {
+      position: absolute;
+      left: 9px;
+      top: 13px;
+      width: 32px;
+      height: 24px;
+      border: 2px solid rgba(26, 18, 12, 0.82);
+      border-radius: 7px 12px 12px 7px;
+      background:
+        linear-gradient(90deg, rgba(255,255,255,0.22), transparent 34%),
+        linear-gradient(180deg, var(--tank-hi), var(--tank-color));
+      box-shadow:
+        inset 0 -4px 0 rgba(0,0,0,0.2),
+        -4px 0 0 rgba(0,0,0,0.18),
+        4px 0 0 rgba(0,0,0,0.18);
+    }
+    .tank-track {
+      position: absolute;
+      left: 6px;
+      width: 38px;
+      height: 8px;
+      border-radius: 999px;
+      background:
+        repeating-linear-gradient(90deg, rgba(255,255,255,0.16) 0 2px, transparent 2px 6px),
+        #322a24;
+      box-shadow: inset 0 -2px 0 rgba(0,0,0,0.3), 0 1px 2px rgba(0,0,0,0.28);
+    }
+    .tank-track.top {
+      top: 9px;
+    }
+    .tank-track.bottom {
+      top: 33px;
+    }
+    .tank-cannon {
+      position: absolute;
+      left: 30px;
+      top: 21px;
+      width: 20px;
+      height: 8px;
+      border-radius: 999px;
+      background: #f6f1de;
+      box-shadow: inset 0 -2px 0 rgba(0,0,0,0.18);
+    }
+    .tank-hud {
+      position: absolute;
+      left: 50%;
+      top: -32px;
+      z-index: 2;
+      display: grid;
+      justify-items: center;
+      gap: 2px;
+      width: 118px;
+      transform: translateX(-50%);
+      pointer-events: none;
+    }
+    .tank-name,
+    .tank-skill {
+      max-width: 118px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      border: 1px solid rgba(255,255,255,0.18);
+      border-radius: 999px;
+      background: rgba(7, 12, 9, 0.82);
+      box-shadow: 0 2px 6px rgba(0,0,0,0.34);
+      text-shadow: 0 1px 2px #000;
+    }
+    .tank-name {
+      padding: 2px 7px;
+      color: #fff7dc;
+      font-size: 10px;
+      font-weight: 800;
+      line-height: 1.15;
+    }
+    .tank-skill {
+      display: none;
+      padding: 1px 6px;
+      color: var(--skill-color, #ffd84d);
+      font-size: 9px;
+      font-weight: 800;
+      line-height: 1.15;
+    }
+    .tank-sprite.has-skill .tank-skill {
       display: block;
-      justify-self: center;
+    }
+    .bullet-sprite {
+      z-index: 6;
+      transform: translate(var(--x), var(--y)) rotate(var(--rot));
+      transition: transform var(--frame-ms, 160ms) linear;
+      filter: drop-shadow(0 0 8px var(--bullet-glow));
+      will-change: transform;
+    }
+    .bullet-sprite::before {
+      content: "";
+      position: absolute;
+      left: 17px;
+      top: 17px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50% 50% 46% 46%;
+      background: radial-gradient(circle at 35% 30%, #fff8cf, var(--bullet-color) 48%, var(--bullet-shadow) 76%);
+    }
+    .bullet-sprite::after {
+      content: "";
+      position: absolute;
+      left: 22px;
+      top: 30px;
+      width: 7px;
+      height: 17px;
+      border-radius: 999px;
+      background: radial-gradient(circle at 50% 16%, rgba(255,250,180,0.95), var(--bullet-tail) 42%, rgba(255,112,20,0) 74%);
+      filter: blur(0.5px);
+      animation: bullet-tail 180ms steps(2, end) infinite;
+    }
+    .impact-burst {
+      z-index: 7;
+      transform: translate(var(--x), var(--y));
+      pointer-events: none;
+    }
+    .impact-burst::before {
+      content: "";
+      position: absolute;
+      inset: 4px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(255,245,160,0.95) 0 16%, rgba(244,137,45,0.72) 17% 38%, transparent 62%);
+      animation: impact-pop 520ms ease-out forwards;
+    }
+    .muzzle-flash {
+      z-index: 8;
+      position: absolute;
+      left: var(--x);
+      top: var(--y);
+      width: 34px;
+      height: 34px;
+      margin: -17px 0 0 -17px;
+      border-radius: 50%;
+      transform: rotate(var(--rot));
+      pointer-events: none;
+      filter: drop-shadow(0 0 10px rgba(255, 213, 75, 0.9));
+      animation: muzzle-flash 190ms ease-out forwards;
+    }
+    .muzzle-flash::before {
+      content: "";
+      position: absolute;
+      inset: 4px;
+      background:
+        radial-gradient(circle at 38% 50%, #fff8c5 0 14%, #ffcf4c 15% 34%, rgba(255, 97, 24, 0.72) 35% 55%, transparent 70%);
+      clip-path: polygon(0 44%, 52% 12%, 100% 50%, 52% 88%, 0 56%);
+    }
+    .skill-burst {
+      z-index: 8;
+      position: absolute;
+      left: calc(var(--x) + 25px);
+      top: calc(var(--y) + 25px);
+      width: 42px;
+      height: 42px;
+      margin: -21px 0 0 -21px;
+      border-radius: 50%;
+      border: 3px solid var(--skill-color, #ffd84d);
+      background: radial-gradient(circle, color-mix(in srgb, var(--skill-color, #ffd84d) 42%, transparent), transparent 66%);
+      box-shadow: 0 0 18px var(--skill-color, #ffd84d);
+      pointer-events: none;
+      animation: skill-burst 760ms ease-out forwards;
+    }
+    .end-overlay {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      z-index: 9;
+      display: none;
+      width: min(320px, calc(100% - 80px));
+      padding: 12px 14px;
+      border: 1px solid rgba(255, 231, 151, 0.44);
+      border-radius: 8px;
+      background: rgba(8, 12, 9, 0.74);
+      color: #fff8df;
+      text-align: center;
+      pointer-events: none;
+      transform: translate(-50%, -50%);
+      box-shadow: 0 10px 30px rgba(0,0,0,0.28);
+      backdrop-filter: blur(2px);
+    }
+    .end-overlay.show {
+      display: block;
+    }
+    .end-overlay strong {
+      display: block;
+      font-size: 16px;
+      line-height: 1.2;
+    }
+    .end-overlay span {
+      display: block;
+      margin-top: 5px;
+      color: #d9cfaa;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    @keyframes star-pulse {
+      from { transform: scale(0.9) rotate(-8deg); }
+      to { transform: scale(1.08) rotate(8deg); }
+    }
+    @keyframes aura-spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+    @keyframes bullet-tail {
+      50% { opacity: 0.38; transform: translateY(2px); }
+    }
+    @keyframes impact-pop {
+      from { opacity: 1; transform: scale(0.55); }
+      to { opacity: 0; transform: scale(1.8); }
+    }
+    @keyframes muzzle-flash {
+      from { opacity: 1; transform: rotate(var(--rot)) scale(0.5); }
+      to { opacity: 0; transform: rotate(var(--rot)) scale(1.65); }
+    }
+    @keyframes skill-burst {
+      from { opacity: 0.95; transform: scale(0.4); }
+      to { opacity: 0; transform: scale(2.4); }
     }
     .loader, .controls {
       display: grid;
@@ -86,9 +428,9 @@
     aside {
       padding: 14px;
       display: grid;
-      grid-template-rows: auto auto auto auto auto 1fr;
+      grid-template-rows: auto auto auto auto auto minmax(0, 1fr);
       gap: 12px;
-      min-height: calc(100vh - 36px);
+      overflow: hidden;
     }
     h1 {
       margin: 0;
@@ -118,6 +460,10 @@
       color: var(--muted);
       font-size: 12px;
       line-height: 1.35;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     .history-key {
       display: grid;
@@ -190,6 +536,14 @@
       padding: 7px 8px;
       font-size: 13px;
     }
+    .match-item.is-loading {
+      border-color: #d9b55d;
+      background: #211f18;
+    }
+    .match-item.is-error {
+      border-color: #8f4a45;
+      background: #231918;
+    }
     .match-empty {
       color: var(--muted);
       font-size: 13px;
@@ -201,6 +555,14 @@
       gap: 10px;
       color: var(--muted);
       font-size: 13px;
+    }
+    .result {
+      overflow-wrap: anywhere;
+      max-height: 96px;
+      overflow: auto;
+    }
+    #tanks {
+      min-height: 0;
     }
     .tank + .tank { margin-top: 10px; }
     .tank strong {
@@ -220,6 +582,7 @@
     }
     .tank dd { margin: 0; color: var(--text); }
     .events {
+      min-height: 0;
       overflow: auto;
       border-top: 1px solid var(--line);
       padding-top: 10px;
@@ -279,8 +642,8 @@
     .left { color: var(--left); }
     .right { color: var(--right); }
     @media (max-width: 900px) {
-      main { grid-template-columns: 1fr; }
-      .stage, aside { min-height: auto; }
+      main { height: auto; grid-template-columns: 1fr; overflow: visible; }
+      .stage, aside { height: auto; min-height: auto; }
       .loader, .controls { grid-template-columns: 1fr; }
       .match-list { max-height: none; }
     }
@@ -289,7 +652,9 @@
 <body>
 <main>
   <section class="stage">
-    <canvas id="board" width="900" height="900"></canvas>
+    <div id="battleStage" class="battle-stage" tabindex="0" aria-label="Replay battlefield">
+      <div class="battle-empty">Load a replay to show the battlefield.</div>
+    </div>
     <input id="timeline" type="range" min="0" max="0" value="0">
     <div class="loader">
       <input id="file" type="file" accept=".json,application/json">
@@ -352,8 +717,8 @@ const OFFICIAL_SKILL_DURATIONS = {
   boost: 6
 };
 const DEBUFF_SKILLS = new Set(["freeze", "stun", "poison"]);
-const canvas = document.getElementById("board");
-const ctx = canvas.getContext("2d");
+const TILE = 50;
+const battleStage = document.getElementById("battleStage");
 const timeline = document.getElementById("timeline");
 const playBtn = document.getElementById("play");
 const speed = document.getElementById("speed");
@@ -374,6 +739,7 @@ let replayModel = null;
 let frames = [];
 let current = 0;
 let timer = null;
+let battleDom = null;
 let matchOffset = 0;
 let matchRows = [];
 let matchHasMore = false;
@@ -701,6 +1067,14 @@ function applyOfficialEvent(state, event, frame) {
     return;
   }
 
+  if (event.type === "map" && event.action === "destroyed") {
+    const point = eventPoint(event);
+    if (setMapTile(state, point, ".")) {
+      state.impacts.push({ type: "mound", position: point.slice() });
+    }
+    return;
+  }
+
   if (event.type === "skill") {
     applySkillEvent(state, event, frame);
   }
@@ -729,6 +1103,7 @@ async function loadOfficialPayload(payload) {
   replayModel = buildReplayModel(payload);
   frames = buildFrames();
   current = 0;
+  battleDom = null;
   timeline.max = String(Math.max(0, frames.length - 1));
   timeline.value = "0";
   resultEl.textContent = "Winner: " + replayModel.result.winner + " / Reason: " + replayModel.result.reason + " / Map: " + replayModel.mapId;
@@ -1012,26 +1387,49 @@ async function loadMatchPage(offset) {
   }
 }
 
-async function replayMatch(match) {
+async function replayMatch(match, button) {
   if (!match) return;
+  const item = button?.closest(".match-item") || null;
+  const originalLabel = button?.textContent || "回放";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "加载中";
+  }
+  if (item) {
+    item.classList.remove("is-error");
+    item.classList.add("is-loading");
+  }
   matchStatusEl.textContent = "正在加载回放...";
-  if (hasInlineReplay(match)) {
-    try {
-      await loadOfficialPayload(match.replayData?.replay?.records ? match : match.match);
-      matchStatusEl.textContent = "已加载回放。";
-      return;
-    } catch (error) {
-      resultEl.textContent = "Inline replay failed, trying public match JSON: " + (error.message || error);
+  let loaded = false;
+  try {
+    if (hasInlineReplay(match)) {
+      try {
+        await loadOfficialPayload(match.replayData?.replay?.records ? match : match.match);
+        loaded = true;
+      } catch (error) {
+        resultEl.textContent = "Inline replay failed, trying public match JSON: " + (error.message || error);
+      }
+    }
+    if (!loaded) {
+      const source = matchReplaySource(match);
+      if (!source) {
+        matchStatusEl.textContent = "这条记录没有可用的回放链接。";
+        return;
+      }
+      document.getElementById("url").value = source;
+      loaded = await loadUrlSource(source);
+    }
+    matchStatusEl.textContent = loaded ? "已加载回放。" : "回放加载失败，详情见结果栏。";
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = originalLabel;
+    }
+    if (item) {
+      item.classList.remove("is-loading");
+      item.classList.toggle("is-error", !loaded);
     }
   }
-  const source = matchReplaySource(match);
-  if (!source) {
-    matchStatusEl.textContent = "这条记录没有可用的回放链接。";
-    return;
-  }
-  document.getElementById("url").value = source;
-  const loaded = await loadUrlSource(source);
-  matchStatusEl.textContent = loaded ? "已加载回放。" : "回放加载失败，详情见结果栏。";
 }
 
 function formatPoint(value) {
@@ -1095,6 +1493,18 @@ function activeSkillNames(tank) {
 
 function displaySkill(skill) {
   return skill || "skill";
+}
+
+function tankSkillStatus(tank) {
+  const active = activeSkillNames(tank);
+  if (tank.skillPulse?.skill) return displaySkill(tank.skillPulse.skill);
+  if (active.length) {
+    return active.map(function (skill) {
+      const effect = tank.activeSkills[skill];
+      return displaySkill(skill) + (effect?.remainingFrames ? " " + effect.remainingFrames + "f" : "");
+    }).join(", ");
+  }
+  return tank.skill && tank.skill !== "unknown" ? displaySkill(tank.skill) : "";
 }
 
 function drawTank(tank, index, tile, ox, oy) {
@@ -1191,6 +1601,7 @@ function eventTitle(event, state) {
   if (event.type === "bullet" && event.action === "created") return actor + "Fire";
   if (event.type === "bullet" && event.action === "mound") return actor + "Mound destroyed";
   if (event.type === "bullet") return actor + "Bullet " + (event.action || "");
+  if (event.type === "map" && event.action === "destroyed") return "Mound destroyed";
   if (event.type === "star" && event.action === "created") return "Star created";
   if (event.type === "star" && event.action === "collected") return actor + "Star collected";
   if (event.type === "speech") return actor + "Speech";
@@ -1255,70 +1666,295 @@ function renderBehaviorList() {
     }).join("") + '</div>';
 }
 
-function draw() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = "#0d0f12";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  if (!frames.length) return;
+function tileClass(value) {
+  if (value === "x") return "stone";
+  if (value === "m") return "dirt";
+  if (value === "o") return "grass";
+  return "floor";
+}
 
-  const frame = frames[current];
-  const state = frame.state;
-  const rows = state.map;
-  const h = rows.length;
-  const w = rows[0].length;
-  const tile = Math.floor(Math.min(canvas.width / w, canvas.height / h));
-  const ox = Math.floor((canvas.width - tile * w) / 2);
-  const oy = Math.floor((canvas.height - tile * h) / 2);
+function mapKey(rows) {
+  return rows.map(function (row) { return Array.isArray(row) ? row.join("") : String(row); }).join("\n");
+}
 
-  for (let y = 0; y < h; y += 1) {
-    for (let x = 0; x < w; x += 1) {
-      const tileValue = rows[y][x];
-      ctx.fillStyle = tileValue === "x" ? "#2d3540" : tileValue === "m" ? "#80664b" : tileValue === "o" ? "#264d3c" : "#171d22";
-      ctx.fillRect(ox + x * tile, oy + y * tile, tile, tile);
-      ctx.strokeStyle = "#222a32";
-      ctx.strokeRect(ox + x * tile, oy + y * tile, tile, tile);
+function mapSizeKey(rows) {
+  return String(rows[0]?.length || 0) + "x" + String(rows.length || 0);
+}
+
+function directionDegrees(direction) {
+  if (direction === "right") return 0;
+  if (direction === "down") return 90;
+  if (direction === "left") return 180;
+  return -90;
+}
+
+function setSpritePosition(node, position, direction) {
+  node.style.setProperty("--x", (position[0] * TILE) + "px");
+  node.style.setProperty("--y", (position[1] * TILE) + "px");
+  node.style.setProperty("--rot", directionDegrees(direction || "right") + "deg");
+}
+
+function fitBattlefield() {
+  if (!battleDom?.board) return;
+  battleDom.board.style.transform = "";
+  const stageWidth = Math.max(1, battleStage.clientWidth - 28);
+  const stageHeight = Math.max(1, battleStage.clientHeight - 28);
+  const boardWidth = battleDom.board.offsetWidth || 1;
+  const boardHeight = battleDom.board.offsetHeight || 1;
+  const scale = Math.min(1, stageWidth / boardWidth, stageHeight / boardHeight);
+  battleDom.board.style.transform = "scale(" + scale + ")";
+}
+
+function createBattlefield(rows) {
+  const height = rows.length;
+  const width = rows[0]?.length || 0;
+  battleStage.innerHTML = "";
+  const board = document.createElement("div");
+  board.className = "playground";
+  board.style.width = (width * TILE) + "px";
+  board.style.height = (height * TILE) + "px";
+  board.style.setProperty("--frame-ms", Math.max(48, Number(speed.value) - 28) + "ms");
+  const tiles = [];
+  for (let y = 0; y < height; y += 1) {
+    tiles[y] = [];
+    for (let x = 0; x < width; x += 1) {
+      const node = document.createElement("div");
+      node.className = "tile " + tileClass(rows[y][x]);
+      node.style.transform = "translate(" + (x * TILE) + "px," + (y * TILE) + "px)";
+      board.appendChild(node);
+      tiles[y][x] = node;
     }
   }
+  battleStage.appendChild(board);
+  battleDom = {
+    board,
+    mapKey: mapSizeKey(rows),
+    tiles: [],
+    tanks: [],
+    bulletsById: new Map(),
+    star: null,
+    endOverlay: null
+  };
+  battleDom.tiles = tiles;
+  requestAnimationFrame(fitBattlefield);
+  return battleDom;
+}
 
-  if (state.star) {
-    ctx.fillStyle = "#ffd84d";
-    ctx.beginPath();
-    ctx.arc(ox + (state.star[0] + 0.5) * tile, oy + (state.star[1] + 0.5) * tile, tile * 0.28, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  (state.impacts || []).forEach(function (impact) {
-    if (impact.type !== "mound" || !impact.position) return;
-    const x = ox + (impact.position[0] + 0.5) * tile;
-    const y = oy + (impact.position[1] + 0.5) * tile;
-    ctx.save();
-    ctx.strokeStyle = "#f8b35d";
-    ctx.fillStyle = "#f8b35d";
-    ctx.globalAlpha = 0.85;
-    ctx.lineWidth = Math.max(2, tile * 0.06);
-    ctx.beginPath();
-    ctx.arc(x, y, tile * 0.34, 0, Math.PI * 2);
-    ctx.stroke();
-    for (let i = 0; i < 8; i += 1) {
-      const angle = (Math.PI * 2 * i) / 8;
-      ctx.beginPath();
-      ctx.moveTo(x + Math.cos(angle) * tile * 0.16, y + Math.sin(angle) * tile * 0.16);
-      ctx.lineTo(x + Math.cos(angle) * tile * 0.42, y + Math.sin(angle) * tile * 0.42);
-      ctx.stroke();
+function updateBattlefieldTiles(dom, rows) {
+  for (let y = 0; y < rows.length; y += 1) {
+    for (let x = 0; x < (rows[y]?.length || 0); x += 1) {
+      const tile = dom.tiles[y]?.[x];
+      if (tile) tile.className = "tile " + tileClass(rows[y][x]);
     }
-    ctx.restore();
+  }
+}
+
+function ensureBattlefield(rows) {
+  if (!battleDom || battleDom.mapKey !== mapSizeKey(rows)) return createBattlefield(rows);
+  battleDom.board.style.setProperty("--frame-ms", Math.max(48, Number(speed.value) - 28) + "ms");
+  updateBattlefieldTiles(battleDom, rows);
+  return battleDom;
+}
+
+function ensureTankSprite(dom, index) {
+  if (dom.tanks[index]) return dom.tanks[index];
+  const node = document.createElement("div");
+  node.className = "tank-sprite tank-" + (index + 1);
+  node.innerHTML = '<div class="tank-machine"><div class="tank-aura"></div><div class="tank-track top"></div><div class="tank-track bottom"></div><div class="tank-body"></div><div class="tank-cannon"></div></div><div class="tank-hud"><span class="tank-name"></span><span class="tank-skill"></span></div>';
+  const colors = index === 0
+    ? { color: "#2f95dd", hi: "#68d3ff" }
+    : { color: "#d64d3e", hi: "#ff936b" };
+  node.style.setProperty("--tank-color", colors.color);
+  node.style.setProperty("--tank-hi", colors.hi);
+  dom.board.appendChild(node);
+  dom.tanks[index] = node;
+  return node;
+}
+
+function renderTankSprites(dom, state) {
+  state.tanks.forEach(function (tank, index) {
+    const node = ensureTankSprite(dom, index);
+    const activeSkills = activeSkillNames(tank);
+    const pulseSkill = tank.skillPulse?.skill || "";
+    const skill = pulseSkill || activeSkills[0] || "";
+    node.classList.toggle("crashed", !!tank.crashed);
+    node.classList.toggle("cloaked", activeSkills.includes("cloak"));
+    node.classList.toggle("in-grass", tankOnGrass(tank, state));
+    node.classList.toggle("has-skill", Boolean(skill));
+    node.style.setProperty("--skill-color", skillColor(skill));
+    setSpritePosition(node, tank.position, tank.direction);
+    const name = node.querySelector(".tank-name");
+    const skillStatus = node.querySelector(".tank-skill");
+    if (name) name.textContent = tank.name;
+    if (skillStatus) skillStatus.textContent = tankSkillStatus(tank);
   });
+  dom.tanks.slice(state.tanks.length).forEach(function (node) { node.remove(); });
+  dom.tanks.length = state.tanks.length;
+}
 
-  state.bullets.forEach(function (bullet) {
+function tankOnGrass(tank, state) {
+  const point = normalizePoint(tank?.position);
+  if (!point) return false;
+  return state.map?.[point[1]]?.[point[0]] === "o";
+}
+
+function ensureStarSprite(dom) {
+  if (dom.star) return dom.star;
+  const node = document.createElement("div");
+  node.className = "star";
+  dom.board.appendChild(node);
+  dom.star = node;
+  return node;
+}
+
+function ensureEndOverlay(dom) {
+  if (dom.endOverlay) return dom.endOverlay;
+  const node = document.createElement("div");
+  node.className = "end-overlay";
+  node.innerHTML = '<strong></strong><span></span>';
+  dom.board.appendChild(node);
+  dom.endOverlay = node;
+  return node;
+}
+
+function renderStar(dom, state) {
+  if (!state.star) {
+    if (dom.star) dom.star.style.display = "none";
+    return;
+  }
+  const star = ensureStarSprite(dom);
+  star.style.display = "block";
+  star.style.setProperty("--x", (state.star[0] * TILE) + "px");
+  star.style.setProperty("--y", (state.star[1] * TILE) + "px");
+}
+
+function renderEndOverlay(dom, frame) {
+  const overlay = ensureEndOverlay(dom);
+  const isFinalFrame = Boolean(replayModel && frames.length && frame.frame >= frames.length - 1);
+  overlay.classList.toggle("show", isFinalFrame);
+  if (!isFinalFrame) return;
+  const winner = replayModel.result?.winner || "draw";
+  const reason = replayModel.result?.reason || "unknown";
+  overlay.querySelector("strong").textContent = "Winner: " + winner;
+  overlay.querySelector("span").textContent = "Reason: " + reason;
+}
+
+function bulletKey(bullet, index) {
+  return String(bullet.id || bullet.objectId || bullet.tank + "-" + index);
+}
+
+function renderBullets(dom, state) {
+  const liveKeys = new Set();
+  state.bullets.forEach(function (bullet, index) {
+    const key = bulletKey(bullet, index);
+    liveKeys.add(key);
+    let node = dom.bulletsById.get(key);
     const owner = state.tanks.findIndex(function (tank) { return tank.name === bullet.tank; });
-    ctx.fillStyle = owner === 0 ? "#bde4ff" : "#ffc7c7";
-    ctx.beginPath();
-    ctx.arc(ox + (bullet.position[0] + 0.5) * tile, oy + (bullet.position[1] + 0.5) * tile, tile * 0.16, 0, Math.PI * 2);
-    ctx.fill();
+    if (!node) {
+      node = document.createElement("div");
+      node.className = "bullet-sprite";
+      dom.board.appendChild(node);
+      dom.bulletsById.set(key, node);
+    }
+    node.style.setProperty("--bullet-color", owner === 0 ? "#ffe36f" : "#67dcff");
+    node.style.setProperty("--bullet-shadow", owner === 0 ? "#c97918" : "#126ba0");
+    node.style.setProperty("--bullet-tail", owner === 0 ? "rgba(255,143,28,0.58)" : "rgba(42,205,255,0.58)");
+    node.style.setProperty("--bullet-glow", owner === 0 ? "rgba(255, 221, 82, 0.95)" : "rgba(72, 210, 255, 0.95)");
+    setSpritePosition(node, bullet.position, bullet.direction);
   });
+  Array.from(dom.bulletsById.entries()).forEach(function ([key, node]) {
+    if (!liveKeys.has(key)) {
+      node.remove();
+      dom.bulletsById.delete(key);
+    }
+  });
+}
 
-  state.tanks.forEach(function (tank, index) { drawTank(tank, index, tile, ox, oy); });
+function addImpactBurst(dom, position) {
+  const point = normalizePoint(position);
+  if (!point) return;
+  const node = document.createElement("div");
+  node.className = "impact-burst";
+  node.style.setProperty("--x", (point[0] * TILE) + "px");
+  node.style.setProperty("--y", (point[1] * TILE) + "px");
+  dom.board.appendChild(node);
+  setTimeout(function () { node.remove(); }, 620);
+}
 
+function muzzlePoint(position, direction) {
+  const point = normalizePoint(position);
+  if (!point) return null;
+  const center = [point[0] * TILE + TILE / 2, point[1] * TILE + TILE / 2];
+  const delta = DIRS[direction] || DIRS.right;
+  return [center[0] + delta[0] * 27, center[1] + delta[1] * 27];
+}
+
+function addMuzzleFlash(dom, position, direction) {
+  const point = muzzlePoint(position, direction);
+  if (!point) return;
+  const node = document.createElement("div");
+  node.className = "muzzle-flash";
+  node.style.setProperty("--x", point[0] + "px");
+  node.style.setProperty("--y", point[1] + "px");
+  node.style.setProperty("--rot", directionDegrees(direction || "right") + "deg");
+  dom.board.appendChild(node);
+  setTimeout(function () { node.remove(); }, 240);
+}
+
+function addSkillBurst(dom, skill, position) {
+  const point = normalizePoint(position);
+  if (!point) return;
+  const node = document.createElement("div");
+  node.className = "skill-burst";
+  node.style.setProperty("--x", (point[0] * TILE) + "px");
+  node.style.setProperty("--y", (point[1] * TILE) + "px");
+  node.style.setProperty("--skill-color", skillColor(skill));
+  dom.board.appendChild(node);
+  setTimeout(function () { node.remove(); }, 820);
+}
+
+function skillBurstPosition(event, state) {
+  return eventPoint(event)
+    || tankByObject(state, event.targetObjectId)?.position
+    || tankByObject(state, event.sourceObjectId)?.position
+    || tankByIndex(state, event.by)?.position;
+}
+
+function renderTransientEffects(dom, frame, state) {
+  (state.impacts || []).forEach(function (impact) {
+    if (impact.position) addImpactBurst(dom, impact.position);
+  });
+  (frame.events || []).forEach(function (event) {
+    if (event.type === "bullet" && event.action === "created") {
+      const shooter = tankByObject(state, event.tank?.id) || tankByIndex(state, event.by);
+      const direction = event.direction || event.tank?.direction || shooter?.direction || "right";
+      addMuzzleFlash(dom, event.tank?.position || shooter?.position, direction);
+    }
+    if (event.type === "bullet" && ["crashed", "hit", "blocked", "mound"].includes(event.action)) {
+      addImpactBurst(dom, eventPoint(event));
+    }
+    if (event.type === "map" && event.action === "destroyed") {
+      addImpactBurst(dom, eventPoint(event));
+    }
+    if (event.type === "tank" && event.action === "crashed") {
+      addImpactBurst(dom, tankByObject(state, event.objectId)?.position || tankByIndex(state, event.index)?.position);
+    }
+    if (event.type === "skill" && ["cast", "applied", "failed"].includes(event.action || "cast")) {
+      addSkillBurst(dom, skillNameForEvent(event), skillBurstPosition(event, state));
+    }
+  });
+}
+
+function renderBattlefield(frame, state) {
+  const dom = ensureBattlefield(state.map);
+  renderStar(dom, state);
+  renderTankSprites(dom, state);
+  renderBullets(dom, state);
+  renderTransientEffects(dom, frame, state);
+  renderEndOverlay(dom, frame);
+}
+
+function renderSidePanel(frame, state) {
   frameLabel.textContent = "Frame " + current + " / " + Math.max(0, frames.length - 1);
   eventCount.textContent = frame.events.length + " events";
   tanksEl.innerHTML = state.tanks.map(function (tank, index) {
@@ -1340,6 +1976,19 @@ function draw() {
   }).join("");
   eventsEl.innerHTML = renderBehaviorList();
   timeline.value = String(current);
+}
+
+function draw() {
+  if (!frames.length) {
+    battleDom = null;
+    battleStage.innerHTML = '<div class="battle-empty">Load a replay to show the battlefield.</div>';
+    return;
+  }
+
+  const frame = frames[current];
+  const state = frame.state;
+  renderBattlefield(frame, state);
+  renderSidePanel(frame, state);
 }
 
 function setFrame(value) {
@@ -1416,7 +2065,7 @@ tankKeyInput.addEventListener("keydown", function (event) {
 matchListEl.addEventListener("click", function (event) {
   const button = event.target.closest(".replay-match");
   if (!button) return;
-  replayMatch(matchRows[Number(button.dataset.index)]);
+  replayMatch(matchRows[Number(button.dataset.index)], button);
 });
 
 document.getElementById("back10").addEventListener("click", function () { stop(); setFrame(current - 10); });
@@ -1438,6 +2087,7 @@ window.addEventListener("keydown", function (event) {
     setFrame(current + 1);
   }
 });
+window.addEventListener("resize", fitBattlefield);
 
 draw();
 renderMatchList();
